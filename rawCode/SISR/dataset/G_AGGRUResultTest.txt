@@ -1,0 +1,46 @@
+经过我自己重新写了AGGRU，替代原本tp的第三层RNN之后的结果
+（1）纯粹的amass端到端训练：[240epochs]
+====dip:  23.02(SIP), 9.96(Ang), 6.37(Pos)
+====tc:   11.74(SIP), 11.02(Ang), 5.05(Pos)
+====mixamo: 23.74(SIP), 9.61(Ang), 8.43(Pos)
+（2）添加dip、mixamo训练部分的wGAN训练(没有进行比例控制)：[320epoch => 600epoch]
+====dip:    16+  => 16.43
+====tx:     12+  => 12.36
+====mixmo:  12+  => 10.49
+
+>>> 在320epoch的基础上：
+（3）减少amass和mixamo的比例、按照amass：dip = 9:1进行GAN训练（所谓dipFocus）：
+结果很差，完全没有办法收敛，得到的结果只是越来越差而已
+（4）那纯用dip进行端到端训练？（新的dipFocus）：
+只能说有略微促进作用 [320epoch]
+====dip:    15.93
+====tc:     12.27
+====mixamo: 13.00
+>>> 那在600epoch的基础上呢：
+(5)用纯dip进行端到端训练（还是在dipFocus）[666epoch => 726epoch]
+====dip:    15.11  =>  14.76
+====tc:     12.74  =>  13.28
+====mixamo: 11.01  =>  11.65
+完整内容在这里[726epoch, AGGRU_uniform_dipFocus]：
+SIP Error (deg): 14.76 (+/- 4.87)
+Angular Error (deg): 7.39 (+/- 2.81)
+Positional Error (cm): 5.16 (+/- 2.06)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 17.37 (+/- 11.98)
+Jitter Error GT(100m/s^3): 11.60 (+/- 16.05)
+
+SIP Error (deg): 13.28 (+/- 4.57)
+Angular Error (deg): 11.33 (+/- 3.83)
+Positional Error (cm): 5.31 (+/- 2.13)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 18.99 (+/- 14.88)
+Jitter Error GT(100m/s^3): 4.18 (+/- 5.54)
+
+SIP Error (deg): 11.65 (+/- 4.01)
+Angular Error (deg): 5.45 (+/- 2.04)
+Positional Error (cm): 3.57 (+/- 1.42)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 16.17 (+/- 10.44)
+Jitter Error GT(100m/s^3): 1.82 (+/- 1.40)
+
+

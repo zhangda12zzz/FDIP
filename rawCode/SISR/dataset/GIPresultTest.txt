@@ -1,0 +1,64 @@
+GAN训练到260epoch左右时，所有指标仍在下降，但是结果较好
+- 训练数据集【amass+dip】
+结果：
+=========tc=========
+SIP Error (deg): 12.15 (+/- 4.08)
+Angular Error (deg): 11.33 (+/- 3.50)
+Positional Error (cm): 5.16 (+/- 1.90)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 19.48 (+/- 12.69)
+Jitter Error GT(100m/s^3): 4.19 (+/- 4.98)
+=========dip=========
+SIP Error (deg): 16.14 (+/- 4.66)
+Angular Error (deg): 8.15 (+/- 2.94)
+Positional Error (cm): 5.02 (+/- 1.97)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 19.00 (+/- 11.52)
+Jitter Error GT(100m/s^3): 11.93 (+/- 15.30)
+=========mixamo=========
+SIP Error (deg): 23.31 (+/- 5.74)
+Angular Error (deg): 10.54 (+/- 3.02)
+Positional Error (cm): 8.26 (+/- 2.33)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 21.29 (+/- 12.56)
+Jitter Error GT(100m/s^3): 2.16 (+/- 1.69)
+
+另有epoch为280时结果也不错，tc不够，但是dip更好了，哦，mixamo也不够
+=========tc=========
+SIP Error (deg): 12.52 (+/- 4.12)
+Angular Error (deg): 11.50 (+/- 3.51)
+Positional Error (cm): 5.26 (+/- 1.90)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 19.59 (+/- 12.87)
+Jitter Error GT(100m/s^3): 4.19 (+/- 4.98)
+=========dip=========
+SIP Error (deg): 15.70 (+/- 4.68)
+Angular Error (deg): 7.95 (+/- 2.91)
+Positional Error (cm): 4.93 (+/- 1.94)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 19.09 (+/- 11.63)
+Jitter Error GT(100m/s^3): 11.93 (+/- 15.30)
+=========mixamo=========
+SIP Error (deg): 23.83 (+/- 5.73)
+Angular Error (deg): 10.50 (+/- 2.99)
+Positional Error (cm): 8.33 (+/- 2.32)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 21.25 (+/- 12.62)
+Jitter Error GT(100m/s^3): 2.16 (+/- 1.69)
+
+
+
+来比较一下transpose的结果：
+=========dip=========
+SIP: 13.97
+Ang: 7.62
+=========tc=========
+SIP: 14.95
+Ang: 12.26
+=========mixamo=========
+SIP Error (deg): 23.81 (+/- 5.93)
+Angular Error (deg): 10.66 (+/- 3.20)
+Positional Error (cm): 8.45 (+/- 2.42)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 12.29 (+/- 7.04)
+Jitter Error GT(100m/s^3): 2.16 (+/- 1.69)

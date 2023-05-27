@@ -1,0 +1,40 @@
+============ Evaluating "GGIP" on "TotalCapture" ============
+Loading imu data from "data/dataset_work/TotalCapture"
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [05:15<00:00,  7.02s/it]
+============== offline ================
+SIP Error (deg): 12.57 (+/- 6.46)
+Angular Error (deg): 11.55 (+/- 5.47)
+Positional Error (cm): 5.35 (+/- 2.92)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 14.45 (+/- 13.43)
+
+============ Evaluating "GGIP" on "DIP_IMU" ============
+Loading imu data from "data/dataset_work/DIP_IMU"
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [01:48<00:00,  6.03s/it]
+============== offline ================
+SIP Error (deg): 13.96 (+/- 6.71)
+Angular Error (deg): 7.70 (+/- 3.90)
+Positional Error (cm): 4.78 (+/- 2.63)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 16.25 (+/- 13.75)
+
+
+
+============ Evaluating "GGIP" on "DIP_IMU" ============
+Loading imu data from "data/dataset_work/DIP_IMU"
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:32<00:00,  1.83s/it]
+============== offline ================
+SIP Error (deg): 14.23 (+/- 6.70)
+Angular Error (deg): 7.69 (+/- 3.83)
+Positional Error (cm): 4.92 (+/- 2.63)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 2.71 (+/- 6.63)
+============ Evaluating "GGIP" on "TotalCapture" ============
+Loading imu data from "data/dataset_work/TotalCapture"
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [01:48<00:00,  2.41s/it]
+============== offline ================
+SIP Error (deg): 12.79 (+/- 6.38)
+Angular Error (deg): 11.62 (+/- 5.38)
+Positional Error (cm): 5.33 (+/- 2.85)
+Mesh Error (cm): 0.00 (+/- 0.00)
+Jitter Error (100m/s^3): 2.89 (+/- 7.24)
