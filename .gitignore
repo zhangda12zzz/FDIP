@@ -1,0 +1,8 @@
+rawCode/
+articulate/__pycache__/
+articulate/math/__pycache__/
+articulate/utils/__pycache__/
+articulate/utils/bullet/__pycache__/
+articulate/utils/rbdl/__pycache__/
+articulate/utils/torch/__pycache__/
+data/__pycache__/
