@@ -1,2 +1,5 @@
 # Ka_GAIP
-source code and dataset of SI-HPE coming soon.
+
+Source code of GAIP.
+Model evaluation can be performed by executing `eval.py`.
+Datasets, models, detailed description coming soon.
