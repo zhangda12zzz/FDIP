@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'    # debug专用
+# os.environ["CUDA_VISIBLE_DEVICES"] = '1'    # debug专用
 import sys
 import time
 import torch
@@ -16,7 +16,7 @@ import articulate as art
 
 class PoseEvaluator:
     def __init__(self):
-        self._eval_fn = art.FullMotionEvaluator('articulate/basicmodel_m_lbs_10_207_0_v1.0.0.pkl', joint_mask=torch.tensor([1, 2, 16, 17]))
+        self._eval_fn = art.FullMotionEvaluator('data/SMPLmodel/basicmodel_m_lbs_10_207_0_v1.0.0.pkl', joint_mask=torch.tensor([1, 2, 16, 17]))
 
     def eval(self, pose_p, pose_t):
         r'''

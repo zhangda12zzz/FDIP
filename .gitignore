@@ -1,4 +1,5 @@
-rawCode/
+rawCode
+__pycache__/
 articulate/__pycache__/
 articulate/math/__pycache__/
 articulate/utils/__pycache__/
@@ -6,3 +7,6 @@ articulate/utils/bullet/__pycache__/
 articulate/utils/rbdl/__pycache__/
 articulate/utils/torch/__pycache__/
 data/__pycache__/
+model/weight
+data/SMPLmodel/basicmodel_m_lbs_10_207_0_v1.0.0.pkl
+data/test/Totalcapture

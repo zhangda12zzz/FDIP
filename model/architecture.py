@@ -3,15 +3,18 @@ import numpy as np
 import torch
 from torch import optim
 
-from model.utils import GAN_loss, ImagePool
+from model.utils import Cos_loss, GAN_loss, ImagePool, get_ee, Criterion_EE, Eval_Criterion, Criterion_EE_2
 from model.base_model import BaseModel
 from model.intergrated import IntegratedModelGIP
 from option_parser import try_mkdir
+import articulate as art
+import config as conf
 
 
 class GAN_model_GIP(BaseModel):
     def __init__(self, args, dataset, std_paths=None, log_path=None):
         super(GAN_model_GIP, self).__init__(args, log_path=log_path)
+        self.device = torch.device(args.cuda_device if (torch.cuda.is_available()) else 'cpu')
         self.character_names = ['Smpl']
         self.dataset = dataset
         self.args = args
@@ -24,15 +27,18 @@ class GAN_model_GIP(BaseModel):
         self.G_para = model_GIP.G_parameters()
 
         self.criterion_rec = torch.nn.MSELoss()
-        # self.optimizerD = optim.RMSprop(self.D_para, args.learning_rate / 20.0) # /10.0
+        # self.optimizerD = optim.RMSprop(self.D_para, args.learning_rate / 20.0) # /20.0
         # self.optimizerG = optim.RMSprop(self.G_para, args.learning_rate / 10.0) # 不处理
-        self.optimizerD = optim.Adam(self.D_para, args.learning_rate / 10.0, betas=(0.9, 0.999))
-        self.optimizerG = optim.Adam(self.G_para, args.learning_rate, betas=(0.9, 0.999))
+        self.optimizerD = optim.Adam(self.D_para, args.learning_rate / 20.0, betas=(0.9, 0.999))
+        self.optimizerG = optim.Adam(self.G_para, args.learning_rate / 10.0, betas=(0.9, 0.999))
         self.optimizers = [self.optimizerD, self.optimizerG]
         self.criterion_gan = GAN_loss(args.gan_mode).to(self.device)
+        self.criterion_cos = Cos_loss().to(self.device)
         # self.criterion_cycle = torch.nn.L1Loss()
         # self.criterion_ee = Criterion_EE(args, torch.nn.MSELoss())
         self.fake_pools = ImagePool(args.pool_size)
+        
+        self.smpl_model_func = art.ParametricModel(conf.paths.smpl_file)
 
     def set_input(self, motions):
         self.motions_input = motions    # 包括了[2, motion, character], 其中、motion:tensor[1,C,t_w], character:一个int
@@ -50,30 +56,32 @@ class GAN_model_GIP(BaseModel):
             para.requires_grad = requires_grad
 
     def forward(self):
-        imus, poseGT = self.motions_input  # [n,t,C(24*3+72)]
-        n,t,d = imus.size()
-        # ============ tp的统一训练 ========================================================
-        # pose6d = self.models.auto_encoder.calSMPLpose(imus)   # 原本的TP
+        imus, joints, poseGT, poseGAN, shape = self.motions_input  # [n,t,C(24*3+72)]
         
-        # ============ AGGRU额外训练，由tp计算的jointPos来输入AGGRU计算smpl姿势 ================
-        full_joint_pos_ref = self.models.auto_encoder.calFullJointPos(imus) #[n,t,24*3]
-        full_joint_pos = full_joint_pos_ref.detach()
-        # full_joint_pos = joint.view(n,t,-1).detach()
-        full_pos = torch.concat((full_joint_pos.new_zeros(n, t, 3), full_joint_pos), dim=-1)
-        acc = imus[:,:,:18].view(n,t,6,3)
-        ori = imus[:,:,18:].view(n,t,6,9)
-        full_acc = acc.new_zeros(n, t, 16, 3)
-        full_ori = acc.new_zeros(n, t, 16, 9)
-        imu_pos = [14,15,4,5,11,0]        
-        full_acc[:,:,imu_pos] = acc  # 左手右手，左腿右腿，根节点
-        full_ori[:,:,imu_pos] = ori  # 左手右手，左腿右腿，根节点
-        full_acc = full_acc.view(n,t,-1)
-        full_ori = full_ori.view(n,t,-1)
-        input = torch.concat((full_pos, full_acc, full_ori), dim=-1)
-        pose6d = self.models.pose_encoder(input)
+        # 网络整体训练
+        # leaf_pos, all_pos, r6dpose = self.models.auto_encoder.calSMPLpose(imus, acc_scale=True)   # Transpose
+        leaf_pos, all_pos, r6dpose = self.models.pose_encoder.forwardRaw(imus)  # GAIP
+        self.res_pos_leaf = leaf_pos    #[n,t,15]
+        self.res_pos_all = all_pos      #[n,t,69]
+        self.res_pose = r6dpose     #[n,t,90]
         
-        self.res_pose = pose6d
+        # r6dpose = self.models.pose_encoder.ggip3ForwardRaw(imus, joints)
+        # self.res_pose = r6dpose     #[n,t,15*9=135]
+        
+        # matpose, eulerpose = self.models.pose_encoder.ggip3ForwardRaw(imus, joints)
+        # self.res_pose_euler = eulerpose
+        # self.res_pose = matpose     #[n,t,15*9=135]
+        
+        n,t,_ = joints.shape
+        joints = joints.view(n,t,23,3)
+        leaf = [7-1, 8-1, 12-1, 20-1, 21-1]
+        self.gt_pos_leaf = joints[:,:,leaf].view(n,t,15)
+        self.gt_pos_all = joints.view(n,t,69)
         self.gt_pose = poseGT   # [n,t,90]
+        # self.gt_pose = poseGT.view(n,t,15*9)   #[n,t,135]
+        # self.gt_pose_ganRef = poseGAN
+        
+        self.shape = shape[:,0]  # [n,t,10] => [n,10]
         
         self.epochCount += 1
 
@@ -108,6 +116,7 @@ class GAN_model_GIP(BaseModel):
         # for i in range(self.n_topology):
         fake = self.fake_pools.query(self.res_pose)
         self.loss_Ds.append(self.backward_D_basic(self.models.discriminator, self.gt_pose.detach(), fake))
+        # self.loss_Ds.append(self.backward_D_basic(self.models.discriminator, self.gt_pose_ganRef.detach(), fake))
         self.loss_D += self.loss_Ds[-1]
         self.loss_recoder.add_scalar('D_loss', self.loss_Ds[-1])
 
@@ -122,17 +131,32 @@ class GAN_model_GIP(BaseModel):
         rec_loss = self.criterion_rec(self.gt_pose, self.res_pose)
         self.loss_recoder.add_scalar('rec_loss_r6d', rec_loss)
         self.rec_loss = rec_loss
-
-        # for src in range(self.n_topology):
-        #     for dst in range(self.n_topology):
-        # # 潜在一致性损失L_ltc
-        # cycle_loss = self.criterion_cycle(self.latents_ref, self.latents)
-        # self.loss_recoder.add_scalar('cycle_loss', cycle_loss)
-        # self.cycle_loss += cycle_loss
-        # # 末端执行器损失L_ee
-        # ee_loss = self.criterion_ee(self.ee_ref, self.res_ee)
+        
+        _,gt_fk_pose = self.reduced_local_to_global(self.gt_pose.shape[0], self.gt_pose.shape[1], self.gt_pose, self.shape)
+        _,res_fk_pose = self.reduced_local_to_global(self.gt_pose.shape[0], self.gt_pose.shape[1], self.res_pose, self.shape)
+        posFK_loss = self.criterion_rec(gt_fk_pose, res_fk_pose)
+        self.loss_recoder.add_scalar('rec_loss_posFK', posFK_loss)
+        self.posFK_loss = posFK_loss
+        
+        # gt_mat_pose = art.math.r6d_to_rotation_matrix(self.gt_pose).view(self.gt_pose.shape[0], self.gt_pose.shape[1], 15*9)
+        # res_mat_pose = art.math.r6d_to_rotation_matrix(self.res_pose).view(self.gt_pose.shape[0], self.gt_pose.shape[1], 15*9)
+        
+        # cos_loss = self.criterion_cos(gt_mat_pose, res_mat_pose)
+        # self.loss_recoder.add_scalar('cos_loss', cos_loss)
+        # self.cos_loss = cos_loss
+        
+        # ee_loss = self.criterion_rec(self.gt_pos_leaf, self.res_pos_leaf)
         # self.loss_recoder.add_scalar('ee_loss', ee_loss)
-        # self.ee_loss += ee_loss
+        # self.ee_loss = ee_loss
+        # pos_loss = self.criterion_rec(self.gt_pos_all, self.res_pos_all)
+        # self.loss_recoder.add_scalar('pos_loss', pos_loss)
+        # self.pos_loss = pos_loss
+        
+        # consistent_loss = self.criterion_rec(self.res_pose[:,1:], self.res_pose[:,:-1])     # 缩小跟前一帧的差异，减小抖动
+        consistent_loss = self.criterion_rec(res_fk_pose[:,1:], res_fk_pose[:,:-1])     # 缩小跟前一帧的差异，减小抖动
+        self.loss_recoder.add_scalar('consistent_loss', consistent_loss)
+        self.consis_loss = consistent_loss
+        
         
         # GAN损失，应该指的是输出的判别结果与标注（只训练生成器时标注为True）之间的损失差 -> 就是L_adv
         if self.args.gan_mode != 'none':
@@ -142,10 +166,16 @@ class GAN_model_GIP(BaseModel):
         self.loss_recoder.add_scalar('G_loss', loss_G)
         self.loss_G += loss_G
 
-        self.loss_G_total = self.rec_loss * self.args.lambda_rec + \
-                            self.loss_G * 1
-                            # self.ee_loss * self.args.lambda_ee / 2 +\
-                            # self.cycle_loss * self.args.lambda_cycle / 2
+        # 通过控制最终反向传播涉及到的损失、来控制训练哪一部分的网络
+        # 我们训练的结果训练出来是： 5*40 : 1 : 100 : 0?
+        self.loss_G_total = self.rec_loss * self.args.lambda_rec * 50 + \
+                            self.loss_G * 1 + \
+                            self.posFK_loss * 50 + \
+                            self.consis_loss * 50 # 5000
+        #                     self.ee_loss * 200 + \
+        #                     self.pos_loss * 200
+        # loss_G的权重一般都是1，这次dip finetune调整为0.005看看，不然在一开始lossG会处于主导地位
+                            
         if backward:
             self.loss_G_total.backward()        # 反向传播
 
@@ -172,8 +202,11 @@ class GAN_model_GIP(BaseModel):
 
     def verbose(self):
         res = {'rec_loss': self.rec_loss.item(),
-            #    'cycle_loss': self.cycle_loss.item(),
+               'posFK_loss': self.posFK_loss.item(),
+            #    'cos_loss': self.cos_loss.item(),
+            #    'pos_loss': self.pos_loss.item(),
             #    'ee_loss': self.ee_loss.item(),
+               'consistent_loss': self.consis_loss.item(),
                'D_loss_gan': self.loss_D.item(),
                'G_loss_gan': self.loss_G.item(),
                }
@@ -202,52 +235,78 @@ class GAN_model_GIP(BaseModel):
             for i, optimizer in enumerate(self.optimizers):
                 file_name = os.path.join(self.model_save_dir, 'optimizers/{}/{}.pt'.format(epoch, i))
                 optimizer.load_state_dict(torch.load(file_name))
-        self.epoch_cnt = epoch
+        self.epoch_cnt = epoch + 1
 
 
     def SMPLtest(self, motions_input):
         with torch.no_grad():
-            imu, motion, root = motions_input  # [n,C(4v-4+3),t_w(64)],  一个int对应character的序号
-            res = self.testForward(imu)
+            if self.is_train:
+                imu, joint, motion, root = motions_input  # [n,C(4v-4+3),t_w(64)],  一个int对应character的序号
+                # motion = motion.view(motion.shape[0], motion.shape[1], 15*9)
+                leafpos, allpos, res = self.testForward(imu)
+                rec_loss = self.testLoss(motion, res, joint, leafpos, allpos)
+            else:
+                imu, motion, root = motions_input
+                _,_,res = self.testForward(imu)
+                rec_loss = self.testLoss(motion, res)
             
-            rec_loss = self.testLoss(motion, res)
-            
-            smplPoseGT = self.models.auto_encoder._reduced_glb_6d_to_full_local_mat(root, motion)
-            smplPoseRes = self.models.auto_encoder._reduced_glb_6d_to_full_local_mat(root, res)
+            smplPoseGT = self.models.pose_encoder._reduced_glb_6d_to_full_local_mat(root, motion)
+            smplPoseRes = self.models.pose_encoder._reduced_glb_6d_to_full_local_mat(root, res)
+            # smplPoseGT = self.models.auto_encoder._reduced_glb_6d_to_full_local_mat(root, motion)
+            # smplPoseRes = self.models.auto_encoder._reduced_glb_6d_to_full_local_mat(root, res)
             return rec_loss, smplPoseGT, smplPoseRes
         
     def testForward(self, input, joint=None):
-        # ============ tp的统一训练 ========================================================
-        self.models.auto_encoder.eval()
-        pose6d =  self.models.auto_encoder.calSMPLpose(input)
-        
-        # ============ AGGRU额外训练，由tp计算的jointPos来输入AGGRU计算smpl姿势 ================
-        # n,t,d = input.size()
-        # full_joint_pos_ref = self.models.auto_encoder.calFullJointPos(input) #[n,t,24*3]
-        # full_joint_pos = full_joint_pos_ref.detach()
-        # # full_joint_pos = joint.view(n,t,-1).detach()
-        # full_pos = torch.concat((full_joint_pos.new_zeros(n, t, 3), full_joint_pos), dim=-1)
-        # acc = input[:,:,:18].view(n,t,6,3)
-        # ori = input[:,:,18:].view(n,t,6,9)
-        # full_acc = acc.new_zeros(n, t, 16, 3)
-        # full_ori = acc.new_zeros(n, t, 16, 9)
-        # imu_pos = [14,15,4,5,11,0]        
-        # full_acc[:,:,imu_pos] = acc  # 左手右手，左腿右腿，根节点
-        # full_ori[:,:,imu_pos] = ori  # 左手右手，左腿右腿，根节点
-        # full_acc = full_acc.view(n,t,-1)
-        # full_ori = full_ori.view(n,t,-1)
-        # input_data = torch.concat((full_pos, full_acc, full_ori), dim=-1)
-        # pose6d = self.models.pose_encoder(input_data)
-        
-        return pose6d
-
+        leafpos, allpos, r6dpose = self.models.pose_encoder.forwardRaw(input)   # GAIP
+        # leafpos, allpos, r6dpose = self.models.auto_encoder.calSMPLpose(input, acc_scale=True)   # transpose
+        return leafpos, allpos, r6dpose
     
-    def testLoss(self, poseGT, poseRes):
+    def testLoss(self, poseGT, poseRes, jointPosGT=None, leafPos=None, allPos=None):
         rec_loss = self.criterion_rec(poseGT, poseRes)
         if self.args.is_train:
-            self.loss_recoder.add_scalar('rec_loss_r6d_val', rec_loss)
+            self.loss_recoder.add_scalar('rec_loss_r6d/val', rec_loss)
+            
+            # gt_mat_pose = art.math.r6d_to_rotation_matrix(self.gt_pose).view(self.gt_pose.shape[0], self.gt_pose.shape[1], 15*9)
+            # res_mat_pose = art.math.r6d_to_rotation_matrix(self.res_pose).view(self.gt_pose.shape[0], self.gt_pose.shape[1], 15*9)
+            # cos_loss = self.criterion_cos(gt_mat_pose, res_mat_pose)
+            # self.loss_recoder.add_scalar('cos_loss/val', cos_loss)
+            
+            # n,t,_ = jointPosGT.shape
+            # jointPosGT = jointPosGT.view(n,t,23,3)
+            # leaf = [7-1, 8-1, 12-1, 20-1, 21-1]
+            # leafPosGT = jointPosGT[:,:,leaf].view(n,t,15)
+            # allPosGT = jointPosGT.view(n,t,69)
+            # ee_loss = self.criterion_rec(leafPosGT, leafPos)
+            # self.loss_recoder.add_scalar('ee_loss/val', ee_loss)
+            # pos_loss = self.criterion_rec(allPosGT, allPos)
+            # self.loss_recoder.add_scalar('pos_loss/val', pos_loss)
+            
         return rec_loss
     
     def compute_test_result(self):
         print("tmp useless")
-     
+        
+    def reduced_local_to_global(self, batch, seq, glb_reduced_pose, shape, root_rotation=None):
+        glb_reduced_pose = art.math.r6d_to_rotation_matrix(glb_reduced_pose).view(batch, -1, conf.joint_set.n_reduced, 3, 3)
+        global_full_pose = torch.eye(3, device=glb_reduced_pose.device).repeat(batch, glb_reduced_pose.shape[1], 24, 1, 1)
+        global_full_pose[:, :, conf.joint_set.reduced] = glb_reduced_pose
+        
+        pose = global_full_pose.clone()
+        for i in range(global_full_pose.shape[0]):
+            pose[i] = self.smpl_model_func.inverse_kinematics_R(global_full_pose[i]).view(-1, 24, 3, 3) # 到这一步变成了相对父节点的相对坐标
+        pose[:, :, conf.joint_set.ignored] = torch.eye(3, device=pose.device)
+        
+        if root_rotation is not None:
+            pose[:, :, 0:1] = root_rotation.view(batch, -1, 1, 3, 3)       # 第一个是全局根节点方向
+        
+        pose = pose.view(batch, seq, 24,3,3).contiguous() #[n,t,24,3,3]
+        joints_pos = torch.zeros(batch, seq, 24, 3)
+        for i in range(pose.shape[0]):
+            _, a_joints_pos = self.smpl_model_func.forward_kinematics(pose[i], shape=shape[i])
+            joints_pos[i] = a_joints_pos.to(self.device)
+            
+        pose = pose.view(batch, seq, 24, 3, 3)
+        joints_pos = joints_pos.view(batch, seq, 24, 3).contiguous()
+        return pose, joints_pos # pose是smpl参数【24维度】，joints_pos是全局关节位置【24维度】
+
+        

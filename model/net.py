@@ -232,7 +232,7 @@ class GGIP(nn.Module):
         
         self.gip1 = AGGRU_1(6*12, n_hid_dec, 5*3)
         self.gip2 = AGGRU_2(6*15, n_hid_dec, 23*3)
-        self.gip3 = AGGRU_3(24*3+16*12, n_hid_dec, 15*6, strategy='uniform')    # uniform / spatial
+        self.gip3 = AGGRU_3(24*3+16*12, n_hid_dec, 15*6, strategy=strategy)    # uniform / spatial
         # self.gip3 = AGGRU_3(24*3+16*12, n_hid_dec, 15*6)
         # self.gip3 = AGGRU_3(24*3+16*12, n_hid_dec, 15*9)
         
@@ -304,11 +304,7 @@ class GGIP(nn.Module):
             self.gip2.load_state_dict(torch.load(path2)['model_state_dict'])
             self.gip3.load_state_dict(torch.load(path3)['model_state_dict'])
         else:
-            # pathWight = 'GGIP/checkpoints/ggip_all_6d.pt'
-            # pathWight = 'GGIP/checkpoints/ggip_all_9d.pt'
-            # pathWight = 'GGIP/checkpoints/ggip_euler_3d.pt'
-            pathWight = 'GGIP/checkpoints/ggip_all_6d_optloss.pt'
-            # pathWight = 'GGIP/checkpoints/ggip_all_6d_optloss_spatial.pt'
+            pathWight = 'model/weight/ggip_all_6d_optloss_spatial.pt'
             self.load_state_dict(torch.load(pathWight)) 
             
     def forwardRaw(self, imu):

@@ -1,7 +1,7 @@
 import os
 import torch
 
-from model.ref_Transpose import TransPoseNet
+# from model.ref_Transpose import TransPoseNet
 from model.motion_discriminator import MotionDiscriminator
 from model.net import GGIP
 
@@ -20,8 +20,8 @@ class IntegratedModelGIP:
         device = args.device
 
         if not args.simple_operator:                                        # 包括了3重网络
-            self.auto_encoder = TransPoseNet(num_past_frame, num_future_frame).to(device)
-            self.pose_encoder = GGIP().to(device)
+            # self.auto_encoder = TransPoseNet(num_past_frame, num_future_frame).to(device)
+            self.pose_encoder = GGIP(strategy='spatial').to(device)
             self.discriminator = MotionDiscriminator(rnn_size=256, input_size=90, num_layers=2, output_size=1).to(device)     # 判别器，要随着6d/9d的更改而更改
         else:
             raise Exception('Conventional operator not yet implemented')
@@ -31,7 +31,7 @@ class IntegratedModelGIP:
 
     def G_parameters(self):
         r'''生成网络参数：自动判别器+静态编码器（+身高）参数 '''
-        return list(self.auto_encoder.parameters()) + list(self.pose_encoder.parameters())# + list(self.static_encoder.parameters()) + self.height_para
+        return list(self.pose_encoder.parameters())# + list(self.static_encoder.parameters()) + self.height_para
 
     def D_parameters(self):
         r''' 判别网络：判别器参数 '''
@@ -44,7 +44,7 @@ class IntegratedModelGIP:
         try_mkdir(path)
 
         # torch.save(self.height, os.path.join(path, 'height.pt'))
-        torch.save(self.auto_encoder.state_dict(), os.path.join(path, 'auto_encoder.pt'))
+        # torch.save(self.auto_encoder.state_dict(), os.path.join(path, 'auto_encoder.pt'))
         torch.save(self.pose_encoder.state_dict(), os.path.join(path, 'pose_encoder.pt'))
         torch.save(self.discriminator.state_dict(), os.path.join(path, 'discriminator.pt'))
         # torch.save(self.static_encoder.state_dict(), os.path.join(path, 'static_encoder.pt'))
@@ -68,8 +68,8 @@ class IntegratedModelGIP:
         path = os.path.join(path, str(epoch))
         print('loading from epoch {}......'.format(epoch))
 
-        self.auto_encoder.load_state_dict(torch.load(os.path.join(path, 'auto_encoder.pt'),
-                                                     map_location=self.args.cuda_device))
+        # self.auto_encoder.load_state_dict(torch.load(os.path.join(path, 'auto_encoder.pt'),
+        #                                              map_location=self.args.cuda_device))
         self.pose_encoder.load_state_dict(torch.load(os.path.join(path, 'pose_encoder.pt'),
                                                      map_location=self.args.cuda_device))
         self.discriminator.load_state_dict(torch.load(os.path.join(path, 'discriminator.pt'),
