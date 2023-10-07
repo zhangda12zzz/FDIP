@@ -1,4 +1,4 @@
-# Ka_GAIP
+# GAIP
 
 Source code of GAIP.
 Model evaluation can be performed by executing `eval.py`.
