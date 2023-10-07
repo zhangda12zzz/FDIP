@@ -2,4 +2,4 @@
 
 Source code of GAIP.
 Model evaluation can be performed by executing `eval.py`.
-Datasets, models, detailed description coming soon.
+Detailed description coming soon.
