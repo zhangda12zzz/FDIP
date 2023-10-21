@@ -1,8 +1,6 @@
 # GAIP
 
-Source code of GAIP.
-
-More detailed descriptions will be sorted out soon.
+Source code of Graph-Based Adversarial Inertial Poser (GAIP).
 
 ## Usage
 

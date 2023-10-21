@@ -1,4 +1,5 @@
 r"""
+    Basically from Transpose, https://github.com/Xinyu-Yi/TransPose.
     Preprocess DIP-IMU and TotalCapture test dataset.
     Synthesize AMASS dataset.
 

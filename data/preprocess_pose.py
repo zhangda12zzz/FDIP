@@ -132,8 +132,7 @@ def process_amass():
         out_imus.append(a_out_imu)
         
         a_shape = shape[i].repeat(a_pose_gt.shape[0],1)
-        out_shape.append(a_shape)
-        
+        out_shape.append(a_shape)  
 
         b += l
 

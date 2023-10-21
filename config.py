@@ -17,9 +17,7 @@ amass_data_test_tmp = ['ACCAD','BMLhandball', 'BMLmovi']
 class paths:
     raw_amass_dir = 'data/raw/AMASS'      # raw AMASS dataset path (raw_amass_dir/ACCAD/ACCAD/s001/*.npz)
     amass_dir = 'data/work/AMASS'         # output path for the synthetic AMASS dataset
-
     raw_dipimu_dir = 'data/raw/DIP_IMU'   # raw DIP-IMU dataset path (raw_dipimu_dir/s_01/*.pkl)
-    bvh_dipimu_dir = 'data/bvh/DIP_IMU'   # raw DIP-IMU dataset path (raw_dipimu_dir/s_01/*.pkl)
     dipimu_dir = 'data/work/DIP_IMU'      # output path for the preprocessed DIP-IMU dataset
 
     # DIP recalculates the SMPL poses for TotalCapture dataset. You should acquire the pose data from the DIP authors.
@@ -27,14 +25,13 @@ class paths:
     raw_totalcapture_official_dir = 'data/dataset_raw/TotalCapture/official'    # contain official gt (S1/acting1/gt_skel_gbl_pos.txt)
     totalcapture_dir = 'data/dataset_work/TotalCapture'          # output path for the preprocessed TotalCapture dataset
 
-    result_dir = 'data/result'                      # output directory for the evaluation results
+    result_dir = 'data/result'                                 # output directory for the evaluation results
 
     smpl_file = 'data/SMPLmodel/basicmodel_m_lbs_10_207_0_v1.0.0.pkl'              # official SMPL model path
     physics_model_file = 'models/urdfmodels/physics.urdf'      # physics body model path
     plane_file = 'models/urdfmodels/plane.urdf'                # (for debug) path to plane.urdf    Please put plane.obj next to it.
     
-    # debug专用的更改
-    weights_file = 'data/weights/weights.pt'                # network weight file
+    weights_file = 'model/weights/weights.pt'                # network weight file
     weights_file_trial = 'data/weights/trial1210_refine45_1011.pt'
     
     # weights_file_tp = 'data/weights/weights_tp.pt'                # network weight file for transpose
