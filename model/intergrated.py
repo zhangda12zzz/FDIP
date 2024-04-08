@@ -1,7 +1,8 @@
 import os
 import torch
 
-# from model.ref_Transpose import TransPoseNet
+from model.ref_Transpose import TransPoseNet
+from model.ref_pip import PIP
 from model.motion_discriminator import MotionDiscriminator
 from model.net import GGIP
 
@@ -20,7 +21,8 @@ class IntegratedModelGIP:
         device = args.device
 
         if not args.simple_operator:                                        # 包括了3重网络
-            # self.auto_encoder = TransPoseNet(num_past_frame, num_future_frame).to(device)
+            # self.auto_encoder = TransPoseNet(num_past_frame, num_future_frame).to(device) # Transpose
+            # self.auto_encoder = PIP(device=device).to(device) # PIP
             self.pose_encoder = GGIP(strategy='spatial').to(device)
             self.discriminator = MotionDiscriminator(rnn_size=256, input_size=90, num_layers=2, output_size=1).to(device)     # 判别器，要随着6d/9d的更改而更改
         else:
@@ -32,6 +34,7 @@ class IntegratedModelGIP:
     def G_parameters(self):
         r'''生成网络参数：自动判别器+静态编码器（+身高）参数 '''
         return list(self.pose_encoder.parameters())# + list(self.static_encoder.parameters()) + self.height_para
+        # return list(self.auto_encoder.parameters()) + list(self.pose_encoder.parameters())
 
     def D_parameters(self):
         r''' 判别网络：判别器参数 '''

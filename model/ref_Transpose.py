@@ -80,7 +80,7 @@ class TransPoseNet(torch.nn.Module):
         self.last_root_pos = torch.zeros(3)
         self.reset()
 
-        self.load_state_dict(torch.load(paths.weights_file))  # 因为rnn统一赋值所以不需要他的预训练权重了
+        # self.load_state_dict(torch.load(paths.weights_file_tp))  # 因为rnn统一赋值所以不需要他的预训练权重了
         self.eval()
 
     def _reduced_glb_6d_to_full_local_mat(self, root_rotation, glb_reduced_pose):

@@ -93,8 +93,11 @@ class AGGRU_1(nn.Module):
         imu = x.view(n,t,6,12)
         imu_data = imu.permute(0,3,1,2) #[n,d,t,v]
         
+        # 使用s-GC模块
         imu_res = imu_data + self.imu_gcn(imu_data, self.graph_imu * self.emul_out + self.eadd_out)
         imu_res = imu_res.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
+        # 对比消融实验：没有sGC模块
+        # imu_res = imu_data.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
         
         input = imu_res
         input = self.in_dropout(input)
@@ -143,8 +146,11 @@ class AGGRU_2(nn.Module):
         imuAndpos = x.view(n,t,6,15)
         imu_data = imuAndpos.permute(0,3,1,2) #[n,d,t,v]
         
+        # 使用s-GC模块
         imu_res = imu_data + self.imu_gcn(imu_data, self.graph_imu * self.emul_out + self.eadd_out)
         imu_res = imu_res.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
+        # 对比消融实验：没有sGC模块
+        # imu_res = imu_data.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
         
         input = imu_res
         input = self.in_dropout(input)
@@ -208,10 +214,15 @@ class AGGRU_3(nn.Module):   # GAIP的rnn3，输出结果为矩阵15*9
         imu_data = torch.concat((acc,ori), dim=-1)
         imu_data = imu_data.permute(0,3,1,2)            # [n,12,t,15]
         
+        
+        # 使用s-GC模块
         pos_res = pos + self.pos_gcn(pos, self.graph_pos * self.emul_in + self.eadd_in)
         imu_res = imu_data + self.imu_gcn(imu_data, self.graph_imu * self.emul_out + self.eadd_out)
         pos_res = pos_res.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
         imu_res = imu_res.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
+        # 对比消融实验：没有sGC模块
+        # pos_res = pos.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
+        # imu_res = imu_data.permute(0, 2, 1, 3).contiguous().view(n,t,-1)
         
         input = torch.concat((imu_res, pos_res), dim=-1)
         input = self.in_dropout(input)
@@ -297,9 +308,9 @@ class GGIP(nn.Module):
   
     def loadPretrain(self, seperate=False):
         if seperate:
-            path1 = 'GGIP/checkpoints/ggip1/epoch_192.pkl'
-            path2 = 'GGIP/checkpoints/ggip2/epoch_80.pkl'
-            path3 = 'GGIP/checkpoints/ggip3/epoch_280.pkl'
+            path1 = 'model/weight/seperateTri/Rl_192epoch.pkl'
+            path2 = 'model/weight/seperateTri/Ra_80epoch.pkl'
+            path3 = 'model/weight/seperateTri/Rp_280epoch.pkl'
             self.gip1.load_state_dict(torch.load(path1)['model_state_dict'])
             self.gip2.load_state_dict(torch.load(path2)['model_state_dict'])
             self.gip3.load_state_dict(torch.load(path3)['model_state_dict'])

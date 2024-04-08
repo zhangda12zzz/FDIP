@@ -3,7 +3,7 @@ import argparse
 
 def get_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--save_dir', type=str, default='./pretrained', help='directory for all savings')
+    parser.add_argument('--save_dir', type=str, default='./train', help='directory for all savings')
     parser.add_argument('--cuda_device', type=str, default='cuda:0', help='cuda device number, eg:[cuda:0]')
     parser.add_argument('--num_layers', type=int, default=2, help='number of layers')
     parser.add_argument('--learning_rate', type=float, default=2e-4, help='learning rate')
@@ -15,7 +15,7 @@ def get_parser():
     parser.add_argument('--activation', type=str, default='LeakyReLU', help='activation: ReLU, LeakyReLU, tanh')
     parser.add_argument('--rotation', type=str, default='quaternion', help='representation of rotation:euler_angle, quaternion')
     parser.add_argument('--data_augment', type=int, default=1, help='data_augment: 1 or 0')
-    parser.add_argument('--epoch_num', type=int, default=401, help='epoch_num')  #20001
+    parser.add_argument('--epoch_num', type=int, default=306, help='epoch_num')  #20001
     parser.add_argument('--window_size', type=int, default=128, help='length of time axis per window')  # retarget use 64, when CIP, use 256
     parser.add_argument('--kernel_size', type=int, default=15, help='must be odd')
     parser.add_argument('--base_channel_num', type=int, default=-1)
@@ -33,7 +33,7 @@ def get_parser():
     parser.add_argument('--ee_loss_fact', type=str, default='height')
     parser.add_argument('--pos_repr', type=str, default='3d') 
     parser.add_argument('--D_global_velo', type=int, default=0)
-    parser.add_argument('--gan_mode', type=str, default='lsgan') # 'lsgan' / 'none'
+    parser.add_argument('--gan_mode', type=str, default='finetune') # 'lsgan' / 'none' / 'finetune'
     parser.add_argument('--pool_size', type=int, default=50)
     parser.add_argument('--is_train', type=int, default=1)
     parser.add_argument('--model', type=str, default='mul_top_mul_ske')

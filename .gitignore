@@ -6,6 +6,12 @@ articulate/utils/bullet/__pycache__/
 articulate/utils/rbdl/__pycache__/
 articulate/utils/torch/__pycache__/
 data/__pycache__/
-model/weight
+data/data_all/
+data/dataset_raw/*
+data/dataset_work/*
 data/SMPLmodel/basicmodel_m_lbs_10_207_0_v1.0.0.pkl
 data/test/Totalcapture
+model/weight
+train/checkpoints/
+train/logs/
+train/para.txt

@@ -11,14 +11,14 @@ import torch
 #               'BioMotionLab_NTroje', 'BMLhandball', 'MPI_Limits', 'DFaust67']
 amass_data = ['ACCAD', 'BMLhandball', 'BMLmovi', 'BMLrub', 'CMU', 'DanceDB', 'DFaust', 'EKUT', 'EyesJapanDataset', 
               'HDM05', 'HUMAN4D', 'HumanEva', 'KIT', 'Mosh', 'SFU', 'TotalCapture', 'Transitions', 'PosePrior', 'SSM', 'TCDHands']
-amass_data_test_tmp = ['ACCAD','BMLhandball', 'BMLmovi']
+amass_data_test_tmp = ['ACCAD']
 
 
 class paths:
-    raw_amass_dir = 'data/raw/AMASS'      # raw AMASS dataset path (raw_amass_dir/ACCAD/ACCAD/s001/*.npz)
-    amass_dir = 'data/work/AMASS'         # output path for the synthetic AMASS dataset
-    raw_dipimu_dir = 'data/raw/DIP_IMU'   # raw DIP-IMU dataset path (raw_dipimu_dir/s_01/*.pkl)
-    dipimu_dir = 'data/work/DIP_IMU'      # output path for the preprocessed DIP-IMU dataset
+    raw_amass_dir = 'data/dataset_raw/AMASS'      # raw AMASS dataset path (raw_amass_dir/ACCAD/ACCAD/s001/*.npz)
+    amass_dir = 'data/dataset_work/AMASS'         # output path for the synthetic AMASS dataset
+    raw_dipimu_dir = 'data/dataset_raw/DIP_IMU'   # raw DIP-IMU dataset path (raw_dipimu_dir/s_01/*.pkl)
+    dipimu_dir = 'data/dataset_work/DIP_IMU'      # output path for the preprocessed DIP-IMU dataset
 
     # DIP recalculates the SMPL poses for TotalCapture dataset. You should acquire the pose data from the DIP authors.
     raw_totalcapture_dip_dir = 'data/dataset_raw/TotalCapture/DIP_recalculate'  # contain ground-truth SMPL pose (*.pkl)
@@ -31,7 +31,7 @@ class paths:
     physics_model_file = 'models/urdfmodels/physics.urdf'      # physics body model path
     plane_file = 'models/urdfmodels/plane.urdf'                # (for debug) path to plane.urdf    Please put plane.obj next to it.
     
-    weights_file = 'model/weights/weights.pt'                # network weight file
+    weights_file_tp = 'model/weight/transpose/weights.pt'                # network weight file
     weights_file_trial = 'data/weights/trial1210_refine45_1011.pt'
     
     # weights_file_tp = 'data/weights/weights_tp.pt'                # network weight file for transpose

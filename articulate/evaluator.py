@@ -337,7 +337,8 @@ class FullMotionEvaluator(BasePoseEvaluator):
         mgae = gae[:, self.joint_mask] if self.joint_mask is not None else torch.zeros(1)   # N, mJ
 
         return torch.tensor([[je.mean(),   je.std(dim=0).mean()],
-                             [0,   0],#  [ve.mean(),   ve.std(dim=0).mean()],
+                             [0,0],
+                            #  [ve.mean(),   ve.std(dim=0).mean()],
                              [lae.mean(),  lae.std(dim=0).mean()],
                              [gae.mean(),  gae.std(dim=0).mean()],
                              [jkp.mean(),  jkp.std(dim=0).mean()],
@@ -346,4 +347,7 @@ class FullMotionEvaluator(BasePoseEvaluator):
                              [mje.mean(),  mje.std(dim=0).mean()],
                              [mlae.mean(), mlae.std(dim=0).mean()],
                              [mgae.mean(), mgae.std(dim=0).mean()],
-                             [tre.mean(),  tre.std(dim=0).mean()]])
+                             [tre.mean(),  tre.std(dim=0).mean()],
+                             [jkp[:, [1, 2, 3, 4, 5, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19]].mean(),  jkp[:, [1, 2, 3, 4, 5, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19]].std(dim=0).mean()],
+                             [jkt[:, [1, 2, 3, 4, 5, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19]].mean(),  jkt[:, [1, 2, 3, 4, 5, 6, 9, 12, 13, 14, 15, 16, 17, 18, 19]].std(dim=0).mean()],
+                             ])

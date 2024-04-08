@@ -8,25 +8,30 @@ import option_parser
 import random
 
 class ImuMotionDataEval(Dataset):
-    def __init__(self, args, std_path=None):
+    def __init__(self, args, dataset='dip', std_path=None):
         super(ImuMotionDataEval, self).__init__()
         self.args = args
         self.device = torch.device(args.cuda_device if (torch.cuda.is_available()) else 'cpu')
         self.body_model = art.ParametricModel(paths.smpl_file)
-
+        self.dataset_name = dataset
         
         # dip
-        # imu_path = 'GGIP/data_all/DIP_IMU/Smpl_dipTrain_imus_test.npy'
-        # pose_path = 'GGIP/data_all/DIP_IMU/Smpl_dipTrain_motion_SMPL24_test.npy'
+        if self.dataset_name == 'dip':
+            imu_path = 'data/data_all/DIP_IMU/Smpl_dipTrain_imus_test.npy'
+            pose_path = 'data/data_all/DIP_IMU/Smpl_dipTrain_motion_SMPL24_test.npy'
         # tc
-        imu_path = 'data/test/Totalcapture/Smpl_tc_imus_test.npy'
-        pose_path = 'data/test/Totalcapture/Smpl_tc_motion_SMPL24_test.npy'
+        elif self.dataset_name == 'tc':
+            imu_path = 'data/test/Totalcapture/Smpl_tc_imus_test.npy'
+            pose_path = 'data/test/Totalcapture/Smpl_tc_motion_SMPL24_test.npy'
         # mixamo
-        # imu_path = 'GGIP/data_all/Mixamo/mixamoSMPLPos_imu_test.npy'
-        # pose_path = 'GGIP/data_all/Mixamo/mixamoSMPLPos_motion_SMPL24_test.npy'
+        elif self.dataset_name == 'mixamo':
+            imu_path = 'data/data_all/Mixamo/mixamoSMPLPos_imu_test.npy'
+            pose_path = 'data/data_all/Mixamo/mixamoSMPLPos_motion_SMPL24_test.npy'
         # singleone-imu
-        # imu_path = 'GGIP/data_all/SingleOne-IMU/Smpl_singleone_imus_test.npy'
-        # pose_path = 'GGIP/data_all/SingleOne-IMU/Smpl_singleone_motion_SMPL24_test.npy'
+        else:
+            imu_path = 'data/data_all/SingleOne-IMU/Smpl_singleone_imus_test_s1.npy'
+            pose_path = 'data/data_all/SingleOne-IMU/Smpl_singleone_motion_SMPL24_test_s1.npy'
+                
             
         imu_raw = np.load(imu_path, allow_pickle=True) 
         pose_raw = np.load(pose_path, allow_pickle=True)

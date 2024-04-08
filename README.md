@@ -15,7 +15,7 @@ Download SMPL model from [here](https://smpl.is.tue.mpg.de/). You should click `
 
 ### Pre-trained network weights
 
-Download weights from [here](https://drive.google.com/drive/folders/1ufzKzhfHsYxi-6UeefW3ufu4lFrVcprC?usp=sharing).
+Download weights from [here](https://drive.google.com/drive/folders/1ufzKzhfHsYxi-6UeefW3ufu4lFrVcprC?usp=sharing). A better version is updated (2024.3.28).
 
 
 ### Datasets

@@ -148,8 +148,8 @@ def process_amass():
 def process_dipimu():
     imu_mask = [7, 8, 11, 12, 0, 2]
     # imu_mask = [2, 11, 12, 0, 7, 8] # 根、左脚右脚、头、左手右手
-    train_split = ['s_01','s_02','s_03','s_04','s_05','s_06','s_07','s_08']
-    # train_split = ['s_09','s_10']
+    # train_split = ['s_01','s_02','s_03','s_04','s_05','s_06','s_07','s_08']
+    train_split = ['s_09_test']
     accs, oris, poses, trans = [], [], [], []
 
     # for subject_name in test_split:
@@ -193,7 +193,7 @@ def process_dipimu():
         out_joint.append(out_p_all.detach().numpy())
         
         a_out_pose = poses[i].clone().view(-1,24,3)  # 24,3
-        a_out_pose_ = art.math.axis_angle_to_quaternion(a_out_pose).view(-1,24,4) # 24,4
+        a_out_pose_ = art.math.axis_angle_to_quaternion(a_out_pose).view(-1,24,4) # 24,4  # 【!!!对照关系!!!】这边是wxyz的顺序，TIP那边是xyzw的顺序
         a_out_pose_ = a_out_pose_[:,joint_set.graphA]
         out_pose.append(a_out_pose_.detach().numpy())
         
@@ -319,6 +319,6 @@ def process_totalcapture():
 
 
 if __name__ == '__main__':
-    process_amass()
-    # process_dipimu()
+    # process_amass()
+    process_dipimu()
     # process_totalcapture()

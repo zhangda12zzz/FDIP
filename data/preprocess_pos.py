@@ -11,7 +11,7 @@ import articulate as art
 import torch
 import os
 import pickle
-from config import paths, amass_data,amass_data_test_tmp
+from config import paths, amass_data, amass_data_test_tmp
 import numpy as np
 from tqdm import tqdm
 import glob
@@ -38,6 +38,7 @@ def _syn_acc(v, smooth_n=4):
 
 def process_amass():
     data_pose, data_trans, data_beta, length = [], [], [], []
+    # for ds_name in amass_data:
     for ds_name in amass_data_test_tmp:
         print('\rReading', ds_name)
         for npz_fname in tqdm(glob.glob(os.path.join(paths.raw_amass_dir, ds_name, ds_name, '*/*_poses.npz'))):
@@ -97,7 +98,7 @@ def process_amass():
 
 def process_dipimu():
     imu_mask = [7, 8, 11, 12, 0, 2]
-    test_split = ['s_09', 's_10']
+    test_split = ['s_09_test']
     accs, oris, poses, trans = [], [], [], []
 
     for subject_name in test_split:
@@ -211,6 +212,6 @@ def process_totalcapture():
 
 
 if __name__ == '__main__':
-    process_amass()
-    # process_dipimu()
+    # process_amass()
+    process_dipimu()
     # process_totalcapture()

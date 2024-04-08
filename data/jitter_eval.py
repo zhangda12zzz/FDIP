@@ -21,11 +21,15 @@ class PoseJitterEvaluator:
         pose_p[:, joint_set.ignored] = torch.eye(3, device=pose_p.device)
         pose_t[:, joint_set.ignored] = torch.eye(3, device=pose_t.device)
         errs = self._eval_fn(pose_p, pose_t)
-        return torch.stack([errs[4] / 100, errs[5] / 100])
+        # return torch.stack([errs[4] / 100, errs[5] / 100])
+        return torch.stack([errs[9], errs[3], errs[0] * 100, errs[1] * 100, errs[4] / 100, errs[5] / 100])
 
     @staticmethod
     def print(errors):
-        for i, name in enumerate(['Jitter Error (100m/s^3)', 'Jitter Error GT(100m/s^3)']):
+        # for i, name in enumerate(['Jitter Error (100m/s^3)', 'Jitter Error GT(100m/s^3)']):
+        #     print('%s: %.2f (+/- %.2f)' % (name, errors[i, 0], errors[i, 1]))
+        for i, name in enumerate(['SIP Error (deg)', 'Angular Error (deg)', 'Positional Error (cm)',
+                                  'Mesh Error (cm)', 'Jitter Error (100m/s^3)', 'Jitter Error GT(100m/s^3)']):
             print('%s: %.2f (+/- %.2f)' % (name, errors[i, 0], errors[i, 1]))
             
 
@@ -42,4 +46,4 @@ def eval(path):
     
 
 if __name__ == '__main__':
-    eval('data/work/AMASS/pose.pt')
+    eval('data/dataset_work/DIP_IMU/pose.pt')
