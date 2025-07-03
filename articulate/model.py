@@ -16,6 +16,9 @@ from . import math as M
 class ParametricModel:
     r"""
     SMPL/MANO/SMPLH parametric model.
+
+    ParametricModel 类封装了加载模型数据、进行前向运动学计算（从姿态和形状参数生成三维网格和关节位置）、
+    以及一些辅助功能（如保存和可视化）的核心逻辑
     """
     def __init__(self, official_model_file: str, use_pose_blendshape=False, device=torch.device('cpu')):
         r"""
@@ -24,6 +27,11 @@ class ParametricModel:
         :param official_model_file: Path to the official model to be loaded.
         :param use_pose_blendshape: Whether to use the pose blendshape.
         :param device: torch.device, cpu or cuda.
+
+        _J_regressor (torch.Tensor): 关节回归器、_skinning_weights (torch.Tensor): 蒙皮权重、
+        _posedirs (torch.Tensor): 姿态混合形基（Pose Blendshape Basis）、_shapedirs (torch.Tensor): 形状混合形基（Shape Blendshape Basis）
+        _v_template (torch.Tensor): 模板顶点（Template Vertices）、_J (torch.Tensor): 模板关节位置（Template Joint Positions）
+        faceface (numpy.ndarray): 面（Faces）、parent (list): 骨骼父子关系（Kinematic Tree Table
         """
         with open(official_model_file, 'rb') as f:
             data = pickle.load(f, encoding='latin1')
@@ -44,6 +52,8 @@ class ParametricModel:
 
         :param vertex_position: Vertex position in shape [num_vertex, 3].
         :param file_name: Output obj file name.
+
+        三维网格顶点保存为标准的 OBJ 文件格式，方便在其他三维软件中查看
         """
         with open(file_name, 'w') as fp:
             for v in vertex_position:
@@ -60,6 +70,8 @@ class ParametricModel:
                     (rotation matrices).
         :param tran: Translation tensor in shape [num_frames, 3] for root positions.
         :param output_dir: Output directory path.
+
+        将姿态（旋转矩阵）和根节点平移数据转换为 Unity3D LoadMotion() 函数可读取的文本文件格式
         """
         os.makedirs(output_dir, exist_ok=True)
 
@@ -81,6 +93,8 @@ class ParametricModel:
         :param shape: Tensor for model shapes that can reshape to [batch_size, 10]. Use None for the mean(zero) shape.
         :return: Joint tensor in shape [batch_size, num_joint, 3] and vertex tensor in shape [batch_size, num_vertex, 3]
                  if shape is not None. Otherwise [num_joint, 3] and [num_vertex, 3] assuming the mean(zero) shape.
+
+        计算在“零姿态”（T-pose，即所有关节旋转为零）下的关节和顶点位置，并将根关节对齐到坐标原点
         """
         if shape is None:
             j, v = self._J - self._J[:1], self._v_template - self._J[:1]
@@ -104,9 +118,14 @@ class ParametricModel:
         -----
         :param bone_vec: Bone vector tensor in shape [batch_size, *] that can reshape to [batch_size, num_joint, 3].
         :return: Joint position, in shape [batch_size, num_joint, 3].
+
+        “骨骼向量”（子关节相对于父关节的位移向量）和“关节绝对位置”之间进行转换
         """
         return M.bone_vector_to_joint_position(bone_vec, self.parent)
 
+
+
+    #前向运动学:居局->全部  反向运动学:全部->居局
     def joint_position_to_bone_vector(self, joint_pos: torch.Tensor):
         r"""
         Calculate bone vectors (position difference of child and parent joint) in the base frame from joint positions
@@ -219,6 +238,8 @@ class ParametricModel:
         :return: Joint global rotation in [batch_size, num_joint, 3, 3],
                  joint position in [batch_size, num_joint, 3],
                  and additionally mesh vertex position in [batch_size, num_vertex, 3] if calc_mesh is True.
+
+        根据输入的姿态、形状和根平移参数，计算出最终的全局关节旋转、全局关节位置以及可选的网格顶点位置
         """
         def add_tran(x):
             return x if tran is None else x + tran.view(-1, 1, 3)
@@ -274,6 +295,8 @@ class ParametricModel:
         else:
             vo3d.vis_mesh(verts[0], faces)
 
+
+    #可视化辅助函数
     def view_mesh(self, vertex_list: list, fps=60, distance_between_subjects=0.8):
         r"""
         View model mesh (single frame or a sequence).

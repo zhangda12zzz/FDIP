@@ -2,22 +2,17 @@ import numpy as np
 
 class Quaternions:
     """
-    Quaternions is a wrapper around a numpy ndarray
-    that allows it to act as if it were an narray of
-    a quater data type.
-    
-    Therefore addition, subtraction, multiplication,
-    division, negation, absolute, are all defined
-    in terms of quater operations such as quater
-    multiplication.
-    
-    This allows for much neater code and many routines
-    which conceptually do the same thing to be written
-    in the same way for point data and for rotation data.
-    
-    The Quaternions class has been desgined such that it
-    should support broadcasting and slicing in all of the
-    usual ways.
+    Quaternions 是一个围绕 numpy ndarray 的封装类，
+    使其能够像处理四元数数据类型一样操作。
+
+    因此，加法、减法、乘法、除法、取反、绝对值等操作
+    都被定义为四元数操作，例如四元数乘法。
+
+    这使得代码更加简洁，许多概念上相同的操作可以以相同的方式
+    编写，无论是针对点数据还是旋转数据。
+
+    Quaternions 类的设计使其支持广播和切片操作，
+    并且能够以常规的方式进行这些操作。
     """
     
     def __init__(self, qs):

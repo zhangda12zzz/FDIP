@@ -1,36 +1,44 @@
+"""
+
+四元数相关操作
+
+"""
+
+
 import numpy as np
 
-# Calculate cross object of two 3D vectors.
+# 计算两个3D向量的叉积
 def _fast_cross(a, b):
     return np.concatenate([
         a[...,1:2]*b[...,2:3] - a[...,2:3]*b[...,1:2],
         a[...,2:3]*b[...,0:1] - a[...,0:1]*b[...,2:3],
         a[...,0:1]*b[...,1:2] - a[...,1:2]*b[...,0:1]], axis=-1)
 
-# Make origin quaternions (No rotations)
+# 生成单位四元数（无旋转）
 def eye(shape, dtype=np.float32):
     return np.ones(list(shape) + [4], dtype=dtype) * np.asarray([1, 0, 0, 0], dtype=dtype)
 
-# Return norm of quaternions
+# 计算四元数的模
 def length(x):
     return np.sqrt(np.sum(x * x, axis=-1))
 
-# Make unit quaternions
+# 归一化四元数
 def normalize(x, eps=1e-8):
     return x / (length(x)[...,None] + eps)
 
+# 计算四元数的绝对值
 def abs(x):
     return np.where(x[...,0:1] > 0.0, x, -x)
 
-# Calculate inverse rotations
+# 计算四元数的逆
 def inv(q):
     return np.array([1, -1, -1, -1], dtype=np.float32) * q
 
-# Calculate the dot product of two quaternions
+# 计算两个四元数的点积
 def dot(x, y):
     return np.sum(x * y, axis=-1)[...,None] if x.ndim > 1 else np.sum(x * y, axis=-1)
 
-# Multiply two quaternions (return rotations).
+# 四元数乘法（返回旋转后的四元数）
 def mul(x, y):
     x0, x1, x2, x3 = x[..., 0:1], x[..., 1:2], x[..., 2:3], x[..., 3:4]
     y0, y1, y2, y3 = y[..., 0:1], y[..., 1:2], y[..., 2:3], y[..., 3:4]
@@ -41,20 +49,24 @@ def mul(x, y):
         y0 * x2 + y1 * x3 + y2 * x0 - y3 * x1,
         y0 * x3 - y1 * x2 + y2 * x1 + y3 * x0], axis=-1)
 
+# 计算四元数的逆乘
 def inv_mul(x, y):
     return mul(inv(x), y)
 
+# 计算四元数的乘逆
 def mul_inv(x, y):
     return mul(x, inv(y))
 
-# Multiply quaternions and vectors (return vectors).
+# 四元数与向量相乘（返回旋转后的向量）
 def mul_vec(q, x):
     t = 2.0 * _fast_cross(q[..., 1:], x)
     return x + q[..., 0][..., None] * t + _fast_cross(q[..., 1:], t)
 
+# 计算四元数的逆乘向量
 def inv_mul_vec(q, x):
     return mul_vec(inv(q), x)
 
+# 解卷四元数
 def unroll(x):
     y = x.copy()
     for i in range(1, len(x)):
@@ -63,25 +75,27 @@ def unroll(x):
         y[i][d0 < d1] = -y[i][d0 < d1]
     return y
 
-# Calculate quaternions between two 3D vectors (x to y).
+# 计算两个3D向量之间的四元数（从x到y）
 def between(x, y):
     return np.concatenate([
-        np.sqrt(np.sum(x*x, axis=-1) * np.sum(y*y, axis=-1))[...,None] + 
-        np.sum(x * y, axis=-1)[...,None], 
+        np.sqrt(np.sum(x*x, axis=-1) * np.sum(y*y, axis=-1))[...,None] +
+        np.sum(x * y, axis=-1)[...,None],
         _fast_cross(x, y)], axis=-1)
         
+# 计算四元数的对数
 def log(x, eps=1e-5):
     length = np.sqrt(np.sum(np.square(x[...,1:]), axis=-1))[...,None]
     halfangle = np.where(length < eps, np.ones_like(length), np.arctan2(length, x[...,0:1]) / length)
     return halfangle * x[...,1:]
     
+# 计算四元数的指数
 def exp(x, eps=1e-5):
     halfangle = np.sqrt(np.sum(np.square(x), axis=-1))[...,None]
     c = np.where(halfangle < eps, np.ones_like(halfangle), np.cos(halfangle))
     s = np.where(halfangle < eps, np.ones_like(halfangle), np.sinc(halfangle / np.pi))
     return np.concatenate([c, s * x], axis=-1)
 
-# Calculate global space rotations and positions from local space.
+# 从局部空间计算全局空间的旋转和位置
 def fk(lrot, lpos, parents):
     
     gp, gr = [lpos[...,:1,:]], [lrot[...,:1,:]]
@@ -91,6 +105,7 @@ def fk(lrot, lpos, parents):
         
     return np.concatenate(gr, axis=-2), np.concatenate(gp, axis=-2)
 
+# 从局部空间计算全局空间的旋转
 def fk_rot(lrot, parents):
     
     gr = [lrot[...,:1,:]]
@@ -99,7 +114,7 @@ def fk_rot(lrot, parents):
         
     return np.concatenate(gr, axis=-2)
 
-# Calculate local space rotations and positions from global space.
+# 从全局空间计算局部空间的旋转和位置
 def ik(grot, gpos, parents):
     
     return (
@@ -114,38 +129,40 @@ def ik(grot, gpos, parents):
                 gpos[...,1:,:] - gpos[...,parents[1:],:]),
         ], axis=-2))
 
+# 从全局空间计算局部空间的旋转
 def ik_rot(grot, parents):
     
-    return np.concatenate([grot[...,:1,:], 
+    return np.concatenate([grot[...,:1,:],
                         mul(inv(grot[...,parents[1:],:]), grot[...,1:,:]),
                     ], axis=-2)
     
+# 从局部空间计算全局空间的速度和角速度
 def fk_vel(lrot, lpos, lvel, lang, parents):
     
     gp, gr, gv, ga = [lpos[...,:1,:]], [lrot[...,:1,:]], [lvel[...,:1,:]], [lang[...,:1,:]]
     for i in range(1, len(parents)):
         gp.append(mul_vec(gr[parents[i]], lpos[...,i:i+1,:]) + gp[parents[i]])
         gr.append(mul    (gr[parents[i]], lrot[...,i:i+1,:]))
-        gv.append(mul_vec(gr[parents[i]], lvel[...,i:i+1,:]) + 
+        gv.append(mul_vec(gr[parents[i]], lvel[...,i:i+1,:]) +
             _fast_cross(ga[parents[i]], mul_vec(gr[parents[i]], lpos[...,i:i+1,:])) +
             gv[parents[i]])
         ga.append(mul_vec(gr[parents[i]], lang[...,i:i+1,:]) + ga[parents[i]])
         
     return (
-        np.concatenate(gr, axis=-2), 
+        np.concatenate(gr, axis=-2),
         np.concatenate(gp, axis=-2),
         np.concatenate(gv, axis=-2),
         np.concatenate(ga, axis=-2))
 
-# Linear Interpolation of two vectors
+# 线性插值两个向量
 def lerp(x, y, t):
     return (1 - t) * x + t * y
 
-# LERP of quaternions
+# 四元数的线性插值
 def quat_lerp(x, y, t):
     return normalize(lerp(x, y, t))
 
-# Spherical linear interpolation of quaternions
+# 四元数的球面线性插值
 def slerp(x, y, t):
     if t == 0:
         return x
@@ -163,10 +180,10 @@ def slerp(x, y, t):
 
 
 ###################################################
-# Calculate other rotations from other quaternions.
-################################################### 
+# 从其他旋转表示计算四元数
+###################################################
 
-# Calculate euler angles from quaternions.
+# 从四元数计算欧拉角
 def to_euler(x, order='zyx'):
     
     q0 = x[...,0:1]
@@ -185,7 +202,7 @@ def to_euler(x, order='zyx'):
     
         return np.concatenate([
             np.arctan2(2 * (q2 * q0 - q1 * q3),  q1 * q1 - q2 * q2 - q3 * q3 + q0 * q0),
-            np.arcsin((2 * (q1 * q2 + q3 * q0)).clip(-1,1)), 
+            np.arcsin((2 * (q1 * q2 + q3 * q0)).clip(-1,1)),
             np.arctan2(2 * (q1 * q0 - q2 * q3), -q1 * q1 + q2 * q2 - q3 * q3 + q0 * q0)],axis=-1)
             
     elif order == 'zxy':
@@ -211,7 +228,7 @@ def to_euler(x, order='zyx'):
     else:
         raise NotImplementedError('Cannot convert from ordering %s' % order)
 
-# Calculate rotation matrix from quaternions.
+# 从四元数计算旋转矩阵
 def to_xform(x):
 
     qw, qx, qy, qz = x[...,0:1], x[...,1:2], x[...,2:3], x[...,3:4]
@@ -227,8 +244,7 @@ def to_xform(x):
         np.concatenate([xz - wy, yz + wx, 1.0 - (xx + yy)], axis=-1)[...,None,:],
     ], axis=-2)
 
-# Calculate 6d orthogonal rotation representation (ortho6d) from quaternions.
-# https://github.com/papagina/RotationContinuity
+# 从四元数计算6D正交旋转表示（ortho6d）
 def to_xform_xy(x):
 
     qw, qx, qy, qz = x[...,0:1], x[...,1:2], x[...,2:3], x[...,3:4]
@@ -244,29 +260,29 @@ def to_xform_xy(x):
         np.concatenate([xz - wy, yz + wx], axis=-1)[...,None,:],
     ], axis=-2)
 
-# Calculate scaled angle axis from quaternions.
+# 从四元数计算缩放角轴
 def to_scaled_angle_axis(x, eps=1e-5):
     return 2.0 * log(x, eps)
 
 
 #############################################
-# Calculate quaternions from other rotations.
+# 从其他旋转表示计算四元数
 #############################################
 
-# Calculate quaternions from axis angles.
+# 从轴角计算四元数
 def from_angle_axis(angle, axis):
     c = np.cos(angle / 2.0)[..., None]
     s = np.sin(angle / 2.0)[..., None]
     q = np.concatenate([c, s * axis], axis=-1)
     return q
 
-# Calculate quaternions from axis-angle.
+# 从轴角计算四元数
 def from_axis_angle(rots):
     angle = np.linalg.norm(rots, axis=-1)
     axis = rots / angle[...,None]
     return from_angle_axis(angle, axis)
 
-# Calculate quaternions from euler angles.
+# 从欧拉角计算四元数
 def from_euler(e, order='zyx'):
     axis = {
         'x': np.asarray([1, 0, 0], dtype=np.float32),
@@ -279,32 +295,32 @@ def from_euler(e, order='zyx'):
 
     return mul(q0, mul(q1, q2))
 
-# Calculate quaternions from rotation matrix.
+# 从旋转矩阵计算四元数
 def from_xform(ts):
     
     return normalize(
         np.where((ts[...,2,2] < 0.0)[...,None],
             np.where((ts[...,0,0] >  ts[...,1,1])[...,None],
                 np.concatenate([
-                    (ts[...,2,1]-ts[...,1,2])[...,None], 
-                    (1.0 + ts[...,0,0] - ts[...,1,1] - ts[...,2,2])[...,None], 
-                    (ts[...,1,0]+ts[...,0,1])[...,None], 
+                    (ts[...,2,1]-ts[...,1,2])[...,None],
+                    (1.0 + ts[...,0,0] - ts[...,1,1] - ts[...,2,2])[...,None],
+                    (ts[...,1,0]+ts[...,0,1])[...,None],
                     (ts[...,0,2]+ts[...,2,0])[...,None]], axis=-1),
                 np.concatenate([
-                    (ts[...,0,2]-ts[...,2,0])[...,None], 
-                    (ts[...,1,0]+ts[...,0,1])[...,None], 
-                    (1.0 - ts[...,0,0] + ts[...,1,1] - ts[...,2,2])[...,None], 
+                    (ts[...,0,2]-ts[...,2,0])[...,None],
+                    (ts[...,1,0]+ts[...,0,1])[...,None],
+                    (1.0 - ts[...,0,0] + ts[...,1,1] - ts[...,2,2])[...,None],
                     (ts[...,2,1]+ts[...,1,2])[...,None]], axis=-1)),
             np.where((ts[...,0,0] < -ts[...,1,1])[...,None],
                 np.concatenate([
-                    (ts[...,1,0]-ts[...,0,1])[...,None], 
-                    (ts[...,0,2]+ts[...,2,0])[...,None], 
-                    (ts[...,2,1]+ts[...,1,2])[...,None], 
+                    (ts[...,1,0]-ts[...,0,1])[...,None],
+                    (ts[...,0,2]+ts[...,2,0])[...,None],
+                    (ts[...,2,1]+ts[...,1,2])[...,None],
                     (1.0 - ts[...,0,0] - ts[...,1,1] + ts[...,2,2])[...,None]], axis=-1),
                 np.concatenate([
-                    (1.0 + ts[...,0,0] + ts[...,1,1] + ts[...,2,2])[...,None], 
-                    (ts[...,2,1]-ts[...,1,2])[...,None], 
-                    (ts[...,0,2]-ts[...,2,0])[...,None], 
+                    (1.0 + ts[...,0,0] + ts[...,1,1] + ts[...,2,2])[...,None],
+                    (ts[...,2,1]-ts[...,1,2])[...,None],
+                    (ts[...,0,2]-ts[...,2,0])[...,None],
                     (ts[...,1,0]-ts[...,0,1])[...,None]], axis=-1))))
 
 # Calculate quaternions from ortho6d.
@@ -315,10 +331,10 @@ def from_xform_xy(x):
     c1 = _fast_cross(c2, x[...,0])
     c1 = c1 / np.sqrt(np.sum(np.square(c1), axis=-1))[...,None]
     c0 = x[...,0]
-    
+
     return from_xform(np.concatenate([
-        c0[...,None], 
-        c1[...,None], 
+        c0[...,None],
+        c1[...,None],
         c2[...,None]], axis=-1))
 
 # Calculate quaternions from scaled angle axis.

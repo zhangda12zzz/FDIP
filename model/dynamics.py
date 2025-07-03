@@ -8,6 +8,10 @@ from model.ref_pip_utils import *
 from qpsolvers import solve_qp
 from config import paths
 
+"""
+这个代码实现了一个名为 PhysicsOptimizer 的类，主要用于在物理仿真环境中对机器人进行优化控制，以实现稳定运动
+"""
+
 
 class PhysicsOptimizer:
     test_contact_joints = ['LHIP', 'RHIP', 'SPINE1', 'LKNEE', 'RKNEE', 'SPINE2',

@@ -4,6 +4,10 @@ import torch.nn.functional as F
 from torch.nn.utils import spectral_norm
 
 from model.attention import SelfAttention
+"""
+动作识别
+"""
+
 
 class MotionDiscriminator(nn.Module):
 
@@ -12,7 +16,7 @@ class MotionDiscriminator(nn.Module):
                  input_size,
                  num_layers=2,
                  output_size=1, #1
-                 feature_pool="attention",
+                 feature_pool="attention",#concat"表示将平均池化和最大池化的结果拼接在一起，"attention"表示使用自注意力池化。
                  use_spectral_norm=False,
                  attention_size=256,#1024,
                  attention_layers=1,
@@ -35,7 +39,7 @@ class MotionDiscriminator(nn.Module):
             self.attention = SelfAttention(attention_size=self.attention_size,
                                        layers=self.attention_layers,
                                        dropout=self.attention_dropout)
-        if use_spectral_norm:
+        if use_spectral_norm:   # spectral_norm（权重正则化）防止过拟合
             self.fc = spectral_norm(nn.Linear(linear_size, output_size))
         else:
             self.fc = nn.Linear(linear_size, output_size)

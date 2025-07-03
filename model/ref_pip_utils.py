@@ -1,10 +1,14 @@
 __all__ = ['set_pose', 'smpl_to_rbdl', 'rbdl_to_smpl', 'normalize_and_concat', 'print_title', 'Body', 'smpl_to_rbdl_data']
 
+"""
+这段代码实现了一个用于处理 SMPL 人体模型与 RBDL（Rigid Body Dynamics Library）
+机器人模型之间数据转换的工具集。
+"""
 
 import enum
 import torch
 import numpy as np
-import pybullet as p
+import pybullet as p   # PyBullet is a popular physics engine for robotics simulation
 from articulate.math import rotation_matrix_to_euler_angle_np, euler_angle_to_rotation_matrix_np, euler_convert_np, \
     normalize_angle
 
@@ -37,6 +41,12 @@ def smpl_to_rbdl(poses, trans):
     :param poses: Array that can reshape to [n, 24, 3, 3].
     :param trans: Array that can reshape to [n, 3].
     :return: Ndarray in shape [n, 75] (3 root position + 72 joint rotation).
+    功能：将 SMPL 姿态和位移转换为 RBDL 机器人配置。
+    输入：
+    poses：SMPL 姿态矩阵，形状为 [n, 24, 3, 3]。
+    trans：SMPL 位移向量，形状为 [n, 3]。
+    输出：RBDL 机器人配置，形状为 [n, 75]。
+
     """
     poses = np.array(poses).reshape(-1, 24, 3, 3)
     trans = np.array(trans).reshape(-1, 3)
@@ -65,6 +75,17 @@ def rbdl_to_smpl(qs):
 
 
 def normalize_and_concat(glb_acc, glb_rot):
+    """
+    地球坐标系到局部坐标系
+    Parameters
+    ----------
+    glb_acc
+    glb_rot
+
+    Returns
+    -------
+
+    """
     glb_acc = glb_acc.view(-1, 6, 3)
     glb_rot = glb_rot.view(-1, 6, 3, 3)
     acc = torch.cat((glb_acc[:, :5] - glb_acc[:, 5:], glb_acc[:, 5:]), dim=1).bmm(glb_rot[:, -1])

@@ -1,5 +1,8 @@
 import torch
 from torch import nn
+"""
+注意力机制对输入序列进行加权求和，生成更有意义表示
+"""
 
 def init_weights(m):
     if type(m) == nn.Linear:
@@ -7,8 +10,8 @@ def init_weights(m):
         m.bias.data.fill_(0.01)
 
 class SelfAttention(nn.Module):
-    def __init__(self, attention_size,
-                 batch_first=False,
+    def __init__(self, attention_size,  #时间步长的隐藏状态大小
+                 batch_first=False,  #输入是否为(batch, seq, feature)
                  layers=1,
                  dropout=.0,
                  non_linearity="tanh"):

@@ -1,5 +1,5 @@
 r"""
-    Angular math utils that contain calculations of angles.
+    包含角度计算的数学工具。
 """
 
 
@@ -19,7 +19,7 @@ import torch
 
 class RotationRepresentation(enum.Enum):
     r"""
-    Rotation representations. Quaternions are in wxyz. Euler angles are in local XYZ.
+    旋转表示。四元数为wxyz格式，欧拉角为局部XYZ格式。
     """
     AXIS_ANGLE = 0
     ROTATION_MATRIX = 1
@@ -30,11 +30,11 @@ class RotationRepresentation(enum.Enum):
 
 def to_rotation_matrix(r: torch.Tensor, rep: RotationRepresentation):
     r"""
-    Convert any rotations into rotation matrices. (torch, batch)
+    将任意旋转表示转换为旋转矩阵。(torch, 批量)
 
-    :param r: Rotation tensor.
-    :param rep: The rotation representation used in the input.
-    :return: Rotation matrix tensor of shape [batch_size, 3, 3].
+    :param r: 旋转张量。
+    :param rep: 输入中使用的旋转表示。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵张量。
     """
     if rep == RotationRepresentation.AXIS_ANGLE:
         return axis_angle_to_rotation_matrix(r)
@@ -47,29 +47,27 @@ def to_rotation_matrix(r: torch.Tensor, rep: RotationRepresentation):
     elif rep == RotationRepresentation.ROTATION_MATRIX:
         return r.view(-1, 3, 3)
     else:
-        raise Exception('unknown rotation representation')
-
-
+        raise Exception('未知的旋转表示')
 def radian_to_degree(q):
     r"""
-    Convert radians to degrees.
+    将弧度转换为角度。
     """
     return q * 180.0 / np.pi
 
 
 def degree_to_radian(q):
     r"""
-    Convert degrees to radians.
+    将角度转换为弧度。
     """
     return q / 180.0 * np.pi
 
 
 def normalize_angle(q):
     r"""
-    Normalize radians into [-pi, pi). (np/torch, batch)
+    将弧度归一化到[-pi, pi)区间。(np/torch, 批量)
 
-    :param q: A tensor (np/torch) of angles in radians.
-    :return: The normalized tensor where each angle is in [-pi, pi).
+    :param q: 弧度角张量(np/torch)。
+    :return: 归一化后的张量，每个角度在[-pi, pi)区间内。
     """
     mod = q % (2 * np.pi)
     mod[mod >= np.pi] -= 2 * np.pi
@@ -78,19 +76,19 @@ def normalize_angle(q):
 
 def angle_difference(target, source):
     r"""
-    Calculate normalized target - source. (np/torch, batch)
+    计算归一化的target - source。(np/torch, 批量)
     """
     return normalize_angle(target - source)
 
 
 def angle_between(rot1: torch.Tensor, rot2: torch.Tensor, rep=RotationRepresentation.ROTATION_MATRIX):
     r"""
-    Calculate the angle in radians between two rotations. (torch, batch)
+    计算两个旋转之间的角度（弧度）。(torch, 批量)
 
-    :param rot1: Rotation tensor 1 that can reshape to [batch_size, rep_dim].
-    :param rot2: Rotation tensor 2 that can reshape to [batch_size, rep_dim].
-    :param rep: The rotation representation used in the input.
-    :return: Tensor in shape [batch_size] for angles in radians.
+    :param rot1: 可以重塑为[batch_size, rep_dim]的旋转张量1。
+    :param rot2: 可以重塑为[batch_size, rep_dim]的旋转张量2。
+    :param rep: 输入中使用的旋转表示。
+    :return: 形状为[batch_size]的弧度角张量。
     """
     rot1 = to_rotation_matrix(rot1, rep)
     rot2 = to_rotation_matrix(rot2, rep)
@@ -101,11 +99,11 @@ def angle_between(rot1: torch.Tensor, rot2: torch.Tensor, rep=RotationRepresenta
 
 def svd_rotate(source_points: torch.Tensor, target_points: torch.Tensor):
     r"""
-    Get the rotation that rotates source points to the corresponding target points. (torch, batch)
+    获取将源点旋转到对应目标点的旋转矩阵。(torch, 批量)
 
-    :param source_points: Source points in shape [batch_size, m, n]. m is the number of the points. n is the dim.
-    :param target_points: Target points in shape [batch_size, m, n]. m is the number of the points. n is the dim.
-    :return: Rotation matrices in shape [batch_size, 3, 3] that rotate source points to target points.
+    :param source_points: 形状为[batch_size, m, n]的源点。m为点数，n为维度。
+    :param target_points: 形状为[batch_size, m, n]的目标点。m为点数，n为维度。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵，将源点旋转到目标点。
     """
     usv = [m.svd() for m in source_points.transpose(1, 2).bmm(target_points)]
     u = torch.stack([_[0] for _ in usv])
@@ -120,10 +118,10 @@ def svd_rotate(source_points: torch.Tensor, target_points: torch.Tensor):
 
 def generate_random_rotation_matrix(n=1):
     r"""
-    Generate random rotation matrices. (torch, batch)
+    生成随机旋转矩阵。(torch, 批量)
 
-    :param n: Number of rotation matrices to generate.
-    :return: Random rotation matrices of shape [n, 3, 3].
+    :param n: 要生成的旋转矩阵数量。
+    :return: 形状为[n, 3, 3]的随机旋转矩阵。
     """
     q = torch.zeros(n, 4)
     while True:
@@ -138,10 +136,10 @@ def generate_random_rotation_matrix(n=1):
 
 def axis_angle_to_rotation_matrix(a: torch.Tensor):
     r"""
-    Turn axis-angles into rotation matrices. (torch, batch)
+    将轴角转换为旋转矩阵。(torch, 批量)
 
-    :param a: Axis-angle tensor that can reshape to [batch_size, 3].
-    :return: Rotation matrix of shape [batch_size, 3, 3].
+    :param a: 可以重塑为[batch_size, 3]的轴角张量。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵。
     """
     axis, angle = normalize_tensor(a.view(-1, 3), return_norm=True)
     axis[torch.isnan(axis) | torch.isinf(axis)] = 0
@@ -153,10 +151,10 @@ def axis_angle_to_rotation_matrix(a: torch.Tensor):
 
 def rotation_matrix_to_axis_angle(r: torch.Tensor):
     r"""
-    Turn rotation matrices into axis-angles. (torch, batch)
+    将旋转矩阵转换为轴角。(torch, 批量)
 
-    :param r: Rotation matrix tensor that can reshape to [batch_size, 3, 3].
-    :return: Axis-angle tensor of shape [batch_size, 3].
+    :param r: 可以重塑为[batch_size, 3, 3]的旋转矩阵张量。
+    :return: 形状为[batch_size, 3]的轴角张量。
     """
     import cv2
     result = [cv2.Rodrigues(_)[0] for _ in r.clone().detach().cpu().view(-1, 3, 3).numpy()]
@@ -166,12 +164,12 @@ def rotation_matrix_to_axis_angle(r: torch.Tensor):
 
 def r6d_to_rotation_matrix(r6d: torch.Tensor):
     r"""
-    Turn 6D vectors into rotation matrices. (torch, batch)
+    将6D向量转换为旋转矩阵。(torch, 批量)
 
-    **Warning:** The two 3D vectors of any 6D vector must be linearly independent.
+    **警告:** 任何6D向量的两个3D向量必须线性无关。
 
-    :param r6d: 6D vector tensor that can reshape to [batch_size, 6].
-    :return: Rotation matrix tensor of shape [batch_size, 3, 3].
+    :param r6d: 可以重塑为[batch_size, 6]的6D向量张量。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵张量。
     """
     r6d = r6d.view(-1, 6)
     column0 = normalize_tensor(r6d[:, 0:3])
@@ -184,22 +182,22 @@ def r6d_to_rotation_matrix(r6d: torch.Tensor):
 
 def rotation_matrix_to_r6d(r: torch.Tensor):
     r"""
-    Turn rotation matrices into 6D vectors. (torch, batch)
+    将旋转矩阵转换为6D向量。(torch, 批量)
 
-    :param r: Rotation matrix tensor that can reshape to [batch_size, 3, 3].
-    :return: 6D vector tensor of shape [batch_size, 6].
+    :param r: 可以重塑为[batch_size, 3, 3]的旋转矩阵张量。
+    :return: 形状为[batch_size, 6]的6D向量张量。
     """
     return r.view(-1, 3, 3)[:, :, :2].transpose(1, 2).clone().contiguous().view(-1, 6)
 
 
 def quaternion_to_axis_angle(q: torch.Tensor):
     r"""
-    Turn (unnormalized) quaternions wxyz into axis-angles. (torch, batch)
+    将（未归一化的）四元数wxyz转换为轴角。(torch, 批量)
 
-    **Warning**: The returned axis angles may have a rotation larger than 180 degrees (in 180 ~ 360).
+    **警告**: 返回的轴角可能具有大于180度的旋转（在180 ~ 360度之间）。
 
-    :param q: Quaternion tensor that can reshape to [batch_size, 4].
-    :return: Axis-angle tensor of shape [batch_size, 3].
+    :param q: 可以重塑为[batch_size, 4]的四元数张量。
+    :return: 形状为[batch_size, 3]的轴角张量。
     """
     q = normalize_tensor(q.view(-1, 4))
     theta_half = q[:, 0].clamp(min=-1, max=1).acos()
@@ -210,10 +208,10 @@ def quaternion_to_axis_angle(q: torch.Tensor):
 
 def axis_angle_to_quaternion(a: torch.Tensor):
     r"""
-    Turn axis-angles into quaternions. (torch, batch)
+    将轴角转换为四元数。(torch, 批量)
 
-    :param a: Axis-angle tensor that can reshape to [batch_size, 3].
-    :return: Quaternion wxyz tensor of shape [batch_size, 4].
+    :param a: 可以重塑为[batch_size, 3]的轴角张量。
+    :return: 形状为[batch_size, 4]的四元数wxyz张量。
     """
     axes, angles = normalize_tensor(a.view(-1, 3), return_norm=True)
     axes[torch.isnan(axes)] = 0
@@ -223,10 +221,10 @@ def axis_angle_to_quaternion(a: torch.Tensor):
 
 def quaternion_to_rotation_matrix(q: torch.Tensor):
     r"""
-    Turn (unnormalized) quaternions wxyz into rotation matrices. (torch, batch)
+    将（未归一化的）四元数wxyz转换为旋转矩阵。(torch, 批量)
 
-    :param q: Quaternion tensor that can reshape to [batch_size, 4].
-    :return: Rotation matrix tensor of shape [batch_size, 3, 3].
+    :param q: 可以重塑为[batch_size, 4]的四元数张量。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵张量。
     """
     q = normalize_tensor(q.view(-1, 4))
     a, b, c, d = q[:, 0:1], q[:, 1:2], q[:, 2:3], q[:, 3:4]
@@ -237,10 +235,10 @@ def quaternion_to_rotation_matrix(q: torch.Tensor):
 
 def quat_to_rotation_matrix(q: torch.Tensor):
     r"""
-    Turn quat into rotation matrices. (torch, batch)
+    将四元数转换为旋转矩阵。(torch, 批量)
 
-    :param q: Euler angle tensor that can reshape to [batch_size, 4].
-    :return: Rotation matrix tensor of shape [batch_size, 3, 3].
+    :param q: 可以重塑为[batch_size, 4]的欧拉角张量。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵张量。
     """
     from scipy.spatial.transform import Rotation
     rot = Rotation.from_quat(q.clone().detach().cpu().view(-1, 4).numpy())
@@ -250,13 +248,12 @@ def quat_to_rotation_matrix(q: torch.Tensor):
 
 def rotation_matrix_to_euler_angle(r: torch.Tensor, seq='XYZ', deg=False):
     r"""
-    Turn rotation matrices into euler angles. (torch, batch)
+    将旋转矩阵转换为欧拉角。(torch, 批量)
 
-    :param r: Rotation matrix tensor that can reshape to [batch_size, 3, 3].
-    :param seq: 3 characters belonging to the set {'X', 'Y', 'Z'} for intrinsic
-                rotations, or {'x', 'y', 'z'} for extrinsic rotations (radians).
-                See scipy for details.
-    :return: Euler angle tensor of shape [batch_size, 3].
+    :param r: 可以重塑为[batch_size, 3, 3]的旋转矩阵张量。
+    :param seq: 3个字符，属于{'X', 'Y', 'Z'}用于内在旋转，或{'x', 'y', 'z'}用于外在旋转（弧度）。
+                详见scipy。
+    :return: 形状为[batch_size, 3]的欧拉角张量。
     """
     from scipy.spatial.transform import Rotation
     rot = Rotation.from_matrix(r.clone().detach().cpu().view(-1, 3, 3).numpy())
@@ -266,13 +263,12 @@ def rotation_matrix_to_euler_angle(r: torch.Tensor, seq='XYZ', deg=False):
 
 def euler_angle_to_rotation_matrix(q: torch.Tensor, seq='XYZ'):
     r"""
-    Turn euler angles into rotation matrices. (torch, batch)
+    将欧拉角转换为旋转矩阵。(torch, 批量)
 
-    :param q: Euler angle tensor that can reshape to [batch_size, 3].
-    :param seq: 3 characters belonging to the set {'X', 'Y', 'Z'} for intrinsic
-                rotations, or {'x', 'y', 'z'} for extrinsic rotations (radians).
-                See scipy for details.
-    :return: Rotation matrix tensor of shape [batch_size, 3, 3].
+    :param q: 可以重塑为[batch_size, 3]的欧拉角张量。
+    :param seq: 3个字符，属于{'X', 'Y', 'Z'}用于内在旋转，或{'x', 'y', 'z'}用于外在旋转（弧度）。
+                详见scipy。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵张量。
     """
     from scipy.spatial.transform import Rotation
     rot = Rotation.from_euler(seq, q.clone().detach().cpu().view(-1, 3).numpy())
@@ -282,13 +278,12 @@ def euler_angle_to_rotation_matrix(q: torch.Tensor, seq='XYZ'):
 
 def rotation_matrix_to_euler_angle_np(r, seq='XYZ'):
     r"""
-    Turn rotation matrices into euler angles. (numpy, batch)
+    将旋转矩阵转换为欧拉角。(numpy, 批量)
 
-    :param r: Rotation matrix (np/torch) that can reshape to [batch_size, 3, 3].
-    :param seq: 3 characters belonging to the set {'X', 'Y', 'Z'} for intrinsic
-                rotations, or {'x', 'y', 'z'} for extrinsic rotations (radians).
-                See scipy for details.
-    :return: Euler angle ndarray of shape [batch_size, 3].
+    :param r: 可以重塑为[batch_size, 3, 3]的旋转矩阵(np/torch)。
+    :param seq: 3个字符，属于{'X', 'Y', 'Z'}用于内在旋转，或{'x', 'y', 'z'}用于外在旋转（弧度）。
+                详见scipy。
+    :return: 形状为[batch_size, 3]的欧拉角ndarray。
     """
     from scipy.spatial.transform import Rotation
     return Rotation.from_matrix(np.array(r).reshape(-1, 3, 3)).as_euler(seq)
@@ -296,26 +291,25 @@ def rotation_matrix_to_euler_angle_np(r, seq='XYZ'):
 
 def euler_angle_to_rotation_matrix_np(q, seq='XYZ'):
     r"""
-    Turn euler angles into rotation matrices. (numpy, batch)
+    将欧拉角转换为旋转矩阵。(numpy, 批量)
 
-    :param q: Euler angle (np/torch) that can reshape to [batch_size, 3].
-    :param seq: 3 characters belonging to the set {'X', 'Y', 'Z'} for intrinsic
-                rotations, or {'x', 'y', 'z'} for extrinsic rotations (radians).
-                See scipy for details.
-    :return: Rotation matrix ndarray of shape [batch_size, 3, 3].
+    :param q: 可以重塑为[batch_size, 3]的欧拉角(np/torch)。
+    :param seq: 3个字符，属于{'X', 'Y', 'Z'}用于内在旋转，或{'x', 'y', 'z'}用于外在旋转（弧度）。
+                详见scipy。
+    :return: 形状为[batch_size, 3, 3]的旋转矩阵ndarray。
     """
     from scipy.spatial.transform import Rotation
     return Rotation.from_euler(seq, np.array(q).reshape(-1, 3)).as_matrix()
 
 
-def euler_convert_np(q, from_seq='XYZ', to_seq='XYZ'):
+def euler_convert_np(q, from_seq='XYZ', to_seq='XYZ'):          #旋转完一个轴，再旋转另一个轴
     r"""
-    Convert euler angles into different axis orders. (numpy, single/batch)
+    将欧拉角转换为不同的轴顺序。(numpy, 单/批量)
 
-    :param q: An ndarray of euler angles (radians) in from_seq order. Shape [3] or [N, 3].
-    :param from_seq: The source(input) axis order. See scipy for details.
-    :param to_seq: The target(output) axis order. See scipy for details.
-    :return: An ndarray with the same size but in to_seq order.
+    :param q: 以from_seq顺序的欧拉角（弧度）ndarray。形状为[3]或[N, 3]。
+    :param from_seq: 源（输入）轴顺序。详见scipy。
+    :param to_seq: 目标（输出）轴顺序。详见scipy。
+    :return: 相同大小的ndarray，但以to_seq顺序。
     """
     from scipy.spatial.transform import Rotation
     return Rotation.from_euler(from_seq, q).as_euler(to_seq)
@@ -323,10 +317,10 @@ def euler_convert_np(q, from_seq='XYZ', to_seq='XYZ'):
 
 def rotation_matrix_to_quat(r: torch.Tensor):
     r"""
-    Turn rotation matrices into quaterion. (numpy)
+    将旋转矩阵转换为四元数。(numpy)
 
-    :param r: Rotation matrix tensor that can reshape to [batch_size, 3, 3].
-    :return: quat tensor of shape [batch_size, 4].
+    :param r: 可以重塑为[batch_size, 3, 3]的旋转矩阵张量。
+    :return: 形状为[batch_size, 4]的四元数张量。
     """
     from scipy.spatial.transform import Rotation
     tmp = Rotation.from_matrix(np.array(r).reshape(-1, 3, 3)).as_quat()

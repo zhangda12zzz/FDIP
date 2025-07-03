@@ -5,6 +5,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class SingleLoss:
+    """
+    记录单个损失项在每个训练步骤和每个 epoch 的损失值。
+将损失值写入 TensorBoard。
+
+    """
     def __init__(self, name: str, writer: SummaryWriter):
         self.name = name
         self.loss_step = []
@@ -33,6 +38,11 @@ class SingleLoss:
 
 
 class LossRecorder:
+    """
+
+管理多个 SingleLoss 实例，方便同时记录多个损失项。
+提供统一的接口来添加损失值、记录 epoch 和保存数据。
+    """
     def __init__(self, writer: SummaryWriter):
         self.losses = {}
         self.writer = writer

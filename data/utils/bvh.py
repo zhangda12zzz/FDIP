@@ -1,3 +1,12 @@
+# 此脚本提供加载和保存 BVH（Biovision Hierarchy，生物视觉层次结构）文件的功能，该文件通常用于动作捕捉数据。
+# BVH 格式描述了动画人物的骨骼层次和运动数据。
+
+# 该脚本包括两个主要功能：
+# 1. `load`： 读取 BVH 文件并提取关节名称、层次结构、偏移、旋转、位置和帧定时。
+# 2. 保存 从包含关节层次结构和运动数据的给定数据结构中写入 BVH 文件。
+
+# 脚本使用正则表达式解析 BVH 文件格式，并使用 NumPy 进行高效数据处理。
+
 import re
 import numpy as np
 
@@ -21,17 +30,17 @@ ordermap = {
 
 def load(filename:str, order:str=None) -> dict:
     """Loads a BVH file.
-    
+
     Args:
         filename (str): Path to the BVH file.
         order (str): The order of the rotation channels. (i.e."xyz")
-    
+
     Returns:
         dict: A dictionary containing the following keys:
             * names (list)(jnum): The names of the joints.
             * parents (list)(jnum): The parent indices.
             * offsets (np.ndarray)(jnum, 3): The offsets of the joints.
-            * rotations (np.ndarray)(fnum, jnum, 3) : The local coordinates of rotations of the joints. 
+            * rotations (np.ndarray)(fnum, jnum, 3) : The local coordinates of rotations of the joints.
             * positions (np.ndarray)(fnum, jnum, 3) : The positions of the joints.
             * order (str): The order of the channels.
             * frametime (float): The time between two frames.
@@ -159,10 +168,10 @@ def save_joint(f, data, t, i, save_order, order='zyx', save_positions=False):
     f.write("%sOFFSET %f %f %f\n" % (t, data['offsets'][i,0], data['offsets'][i,1], data['offsets'][i,2]))
     
     if save_positions:
-        f.write("%sCHANNELS 6 Xposition Yposition Zposition %s %s %s \n" % (t, 
+        f.write("%sCHANNELS 6 Xposition Yposition Zposition %s %s %s \n" % (t,
             channelmap_inv[order[0]], channelmap_inv[order[1]], channelmap_inv[order[2]]))
     else:
-        f.write("%sCHANNELS 3 %s %s %s\n" % (t, 
+        f.write("%sCHANNELS 3 %s %s %s\n" % (t,
             channelmap_inv[order[0]], channelmap_inv[order[1]], channelmap_inv[order[2]]))
     
     end_site = True
@@ -188,13 +197,13 @@ def save_joint(f, data, t, i, save_order, order='zyx', save_positions=False):
 
 def save(filename, data, save_positions=False):
     """ Save a joint hierarchy to a file.
-    
+
     Args:
         filename (str): The output will save on the bvh file.
         data (dict): The data to save.(rotations, positions, offsets, parents, names, order, frametime)
         save_positions (bool): Whether to save all of joint positions on MOTION. (False is recommended.)
     """
-    
+
     order = data['order']
     frametime = data['frametime']
     
@@ -207,7 +216,7 @@ def save(filename, data, save_positions=False):
         t += '\t'
 
         f.write("%sOFFSET %f %f %f\n" % (t, data['offsets'][0,0], data['offsets'][0,1], data['offsets'][0,2]) )
-        f.write("%sCHANNELS 6 Xposition Yposition Zposition %s %s %s \n" % 
+        f.write("%sCHANNELS 6 Xposition Yposition Zposition %s %s %s \n" %
             (t, channelmap_inv[order[0]], channelmap_inv[order[1]], channelmap_inv[order[2]]))
 
         save_order = [0]
@@ -231,7 +240,7 @@ def save(filename, data, save_positions=False):
                 if save_positions or j == 0:
                 
                     f.write("%f %f %f %f %f %f " % (
-                        poss[i,j,0], poss[i,j,1], poss[i,j,2], 
+                        poss[i,j,0], poss[i,j,1], poss[i,j,2],
                         rots[i,j,0], rots[i,j,1], rots[i,j,2]))
                 
                 else:

@@ -10,7 +10,10 @@ from option_parser import try_mkdir
 import articulate as art
 import config as conf
 
-
+"""
+这段代码实现了一个基于 GAN 的人体姿态估计模型，通过结合 IMU 数据和 SMPL 模型，预测或生成人体姿态。它使用多种损失函数和训练策略，
+确保生成姿态的准确性和自然性。代码结构清晰，功能模块化，适合用于动作捕捉、虚拟现实等领域。如果你有具体问题（如某个方法的实现细节、损失函数的选择等）
+"""
 class GAN_model_GIP(BaseModel):
     def __init__(self, args, dataset, epoch_k=4, std_paths=None, log_path=None):
         super(GAN_model_GIP, self).__init__(args, log_path=log_path)

@@ -1,15 +1,44 @@
-'''
-    进行数据预处理，产生三种数据：
-    imu数据：关节点顺序为右手左手、右脚左脚、头、根，acc（18）+ori（54），已经经过标准化。(加速度没有除以缩放因子)
-    joint数据：按SMPL顺序的23个节点坐标，已经经过根节点标准化。
-    pose：SMPL姿态参数真值，24个关节数据。
-'''
+"""
+preprocess_pose.py：多源动作捕捉数据预处理工具
+
+主要功能：
+1. 多数据集标准化处理：
+   - 支持三大动作捕捉数据集：AMASS、DIP-IMU、TotalCapture
+   - 统一输出格式：IMU传感器数据、关节位置、姿态参数真值
+
+2. 核心处理流程：
+   - 数据加载：从原始数据文件读取姿势、IMU传感器数据、形状参数等
+   - 坐标系对齐：将不同数据集的坐标系统一为标准SMPL模型框架
+   - 姿态转换：将轴角表示转换为旋转矩阵/四元数格式
+   - IMU数据合成：
+     - 加速度合成：通过顶点位置计算加速度
+     - 方向合成：使用全局旋转矩阵计算传感器方向
+     - 传感器数据标准化：调整传感器顺序并进行坐标系转换
+   - 缺失值处理：对NaN值进行插值处理（使用最近邻填充）
+
+3. 输出数据结构：
+   - IMU数据：包含加速度（18维）和方向（54维）的标准化张量
+   - 关节位置：23个SMPL关键关节的全局坐标（以根关节为基准）
+   - 姿态真值：24关节的旋转矩阵表示（SMPL参数）
+   - 形状参数：SMPL模型的形状参数（仅AMASS数据集）
+
+4. 特殊处理：
+   - AMASS数据：坐标系对齐、运动采样率调整（120→60fps）
+   - DIP-IMU数据：IMU传感器顺序调整、缺失值插值
+   - TotalCapture数据：单位转换（英寸→米）、加速度偏差校正
+
+核心工具：
+- Articulate库：SMPL模型正向动力学计算
+- PyTorch张量运算：高效处理三维姿态数据
+- Numpy：数据存储与格式转换
+"""
 
 
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'    # debug专用
 import pickle
 import torch
+
 import numpy as np
 from tqdm import tqdm
 import glob
@@ -40,6 +69,7 @@ def _syn_acc(v, smooth_n=2): # 4
              for i in range(0, v.shape[0] - smooth_n * 2)])
     return acc
 
+#通过关节位置合成速度
 def _syn_vel(joints, root_rot):
     r"""
     Synthesize velocity from joints positions.
@@ -144,12 +174,14 @@ def process_amass():
     np.save(os.path.join('data/dataset_work/GGIP_used/amass', 'Smpl_amass_motion_SMPL24.npy'), [out_gt_pose, out_shape])
     # np.save(os.path.join('data/dataset_work/GGIP_used/amass', 'Smpl_amass_shape.npy'), out_shape)
     
+'''
 
+'''
 def process_dipimu():
-    imu_mask = [7, 8, 11, 12, 0, 2]
+    imu_mask = [7, 8, 11, 12, 0, 2]   #左右手、左右脚、头、跟
     # imu_mask = [2, 11, 12, 0, 7, 8] # 根、左脚右脚、头、左手右手
     # train_split = ['s_01','s_02','s_03','s_04','s_05','s_06','s_07','s_08']
-    train_split = ['s_09_test']
+    train_split = ['s_09']
     accs, oris, poses, trans = [], [], [], []
 
     # for subject_name in test_split:
@@ -159,7 +191,7 @@ def process_dipimu():
             data = pickle.load(open(path, 'rb'), encoding='latin1')
             acc = torch.from_numpy(data['imu_acc'][:, imu_mask]).float()
             ori = torch.from_numpy(data['imu_ori'][:, imu_mask]).float()
-            pose = torch.from_numpy(data['gt']).float()
+            pose = torch.from_numpy(data['gt']).float()   #地面真实姿态数据（轴角表示）
 
             # fill nan with nearest neighbors
             for _ in range(4):
@@ -179,24 +211,25 @@ def process_dipimu():
 
     length = len(accs)
     
-    out_pose = []
-    out_imus = []
-    out_gt_pose = []
-    out_joint = []
-    out_shape = []
+    out_pose = []   #四元数
+    out_imus = []   #加速度数据拼接旋转矩阵数据
+    out_gt_pose = []   #旋转矩阵
+    out_joint = []  #关节位置
+    out_shape = []  #形状参数
     for i in tqdm(range(length)):
+        #姿态转换成旋转矩阵
         p = art.math.axis_angle_to_rotation_matrix(poses[i]).view(-1, 24, 3, 3)
         grot, joint = body_model.forward_kinematics(p)
         a_joint_all = joint[:, :24]
         p_all = torch.cat((a_joint_all[:,0:1], a_joint_all[:,1:]-a_joint_all[:,0:1]), dim=1)
         out_p_all = p_all[:, conf.joint_set.full, :]
         out_joint.append(out_p_all.detach().numpy())
-        
+        #变为四元数
         a_out_pose = poses[i].clone().view(-1,24,3)  # 24,3
         a_out_pose_ = art.math.axis_angle_to_quaternion(a_out_pose).view(-1,24,4) # 24,4  # 【!!!对照关系!!!】这边是wxyz的顺序，TIP那边是xyzw的顺序
         a_out_pose_ = a_out_pose_[:,joint_set.graphA]
         out_pose.append(a_out_pose_.detach().numpy())
-        
+        #地面真实姿态转换
         a_pose_gt = art.math.axis_angle_to_rotation_matrix(a_out_pose).view(-1, 24, 3, 3)
         out_gt_pose.append(a_pose_gt.detach().numpy())
         
@@ -218,10 +251,10 @@ def process_dipimu():
         
     print('Saving')
     os.makedirs(paths.amass_dir, exist_ok=True)
-    # np.save(os.path.join(paths.amass_dir, 'Smpl_dipTrain_motion.npy'), out_pose)
-    # np.save(os.path.join('data/dataset_work/GGIP_used/dip', 'Smpl_dipTrain_imus.npy'), out_imus)
-    np.save(os.path.join('data/dataset_work/GGIP_used/dip', 'Smpl_dipTrain_motion_SMPL24.npy'), [out_gt_pose,out_shape])
-    # np.save(os.path.join('data/dataset_work/GGIP_used/dip', 'Smpl_dipTrain_joints23.npy'), out_joint)
+    np.save(os.path.join('data/dataset_work/GGIP_DIP', 'Smpl_dipTrain_motion.npy'), out_pose)        #四元数   （n,24,4）
+    np.save(os.path.join('data/dataset_work/GGIP_DIP', 'Smpl_dipTrain_imus.npy'), out_imus)            #(序列长度, 72)。    18+54
+    np.save(os.path.join('data/dataset_work/GGIP_DIP', 'Smpl_dipTrain_motion_SMPL24.npy'), [out_gt_pose,out_shape])        #：(序列长度, 24关节, 3, 3
+    np.save(os.path.join('data/dataset_work/GGIP_DIP', 'Smpl_dipTrain_joints23.npy'), out_joint)        # (序列长度, 23关节, 3)
     
 
 def process_totalcapture():

@@ -39,10 +39,10 @@ class PIP(torch.nn.Module):
                         dropout=0.4)
 
         body_model = art.ParametricModel(paths.smpl_file)
-        self.inverse_kinematics_R = body_model.inverse_kinematics_R
-        self.forward_kinematics = body_model.forward_kinematics
+        self.inverse_kinematics_R = body_model.inverse_kinematics_R   #逆向运动学，位置求姿态
+        self.forward_kinematics = body_model.forward_kinematics     #正向运动学，姿态求位置
         # self.dynamics_optimizer = PhysicsOptimizer(debug=False)
-        self.rnn_states = [None for _ in range(5)]
+        self.rnn_states = [None for _ in range(5)]  #存储rNN的状态
         self.device = device
 
         # self.load_state_dict(torch.load(paths.weights_file))
@@ -57,6 +57,18 @@ class PIP(torch.nn.Module):
     #     pose[:, 0] = root_rotation.view(-1, 3, 3)
     #     return pose
     def _reduced_glb_6d_to_full_local_mat(self, root_rotation, glb_reduced_pose):
+        """
+        该方法将全局的 6D 姿态转换为局部的旋转矩阵
+        Parameters
+        ----------
+        root_rotation
+        glb_reduced_pose
+
+        Returns
+        -------
+
+        """
+
         batch = glb_reduced_pose.shape[0]
         glb_reduced_pose = art.math.r6d_to_rotation_matrix(glb_reduced_pose).view(batch, -1, joint_set.n_reduced, 3, 3)
         global_full_pose = torch.eye(3, device=glb_reduced_pose.device).repeat(batch, glb_reduced_pose.shape[1], 24, 1, 1)
@@ -77,7 +89,7 @@ class PIP(torch.nn.Module):
     def forward(self, x, lj_init):
         r"""
         Forward.
-
+        通过多个 RNN 层逐步计算叶节点、全节点和全局姿态。
         :param x: A list in length [batch_size] which contains 3-tuple
                   (tensor [num_frames, 72], tensor [15]).
         """
@@ -91,6 +103,18 @@ class PIP(torch.nn.Module):
         return leaf_joint, full_joint, global_6d_pose#, joint_velocity, contact
     
     def calSMPLpose(self, imu, ljpos):
+        """
+        该方法用于计算 SMPL 模型的姿态。
+        对 IMU 数据进行预处理后，调用 forward 方法获取姿态信息
+        Parameters
+        ----------
+        imu
+        ljpos
+
+        Returns
+        -------
+
+        """
         if acc_scale:
             n,t,_ = imu.shape
             acc = imu[:,:,:18].view(n,t,6,3)
@@ -103,6 +127,18 @@ class PIP(torch.nn.Module):
     
     @torch.no_grad()
     def calSMPLpose_eval(self, imu, init_pose): # [t,90]
+        """
+        该方法用于评估模式下计算 SMPL 姿态。
+        初始化姿态后，调用 calSMPLpose 方法。
+        Parameters
+        ----------
+        imu
+        init_pose
+
+        Returns
+        -------
+
+        """
         init_p = torch.zeros((1, 24, 3, 3)).to(self.device)
         for i in range(24):
             init_p[:,i] = torch.eye(3).to(self.device)
@@ -115,27 +151,34 @@ class PIP(torch.nn.Module):
         return self.calSMPLpose(imu, lj_init)
 
 
-    # @torch.no_grad()
-    # def predict(self, glb_acc, glb_rot, init_pose):
+    @torch.no_grad()
+    def predict(self, glb_acc, glb_rot, init_pose):
         r"""
         Predict the results for evaluation.
+输入：
 
-        :param glb_acc: A tensor that can reshape to [num_frames, 6, 3].
-        :param glb_rot: A tensor that can reshape to [num_frames, 6, 3, 3].
-        :param init_pose: A tensor that can reshape to [1, 24, 3, 3].
-        :return: Pose tensor in shape [num_frames, 24, 3, 3] and
-                 translation tensor in shape [num_frames, 3].
+glb_acc：全局加速度，形状为 [num_frames, 6, 3]。
+
+glb_rot：全局旋转矩阵，形状为 [num_frames, 6, 3, 3]。
+
+init_pose：初始姿态矩阵，形状为 [1, 24, 3, 3]。
+
+输出：
+
+pose_opt：优化后的姿态矩阵，形状为 [num_frames, 24, 3, 3]。
+
+tran_opt：优化后的位移向量，形状为 [num_frames, 3]。
         """
         self.dynamics_optimizer.reset_states()
         init_pose = init_pose.view(1, 24, 3, 3)
         init_pose[0, 0] = torch.eye(3)
-        lj_init = self.forward_kinematics(init_pose)[1][0, joint_set.leaf].view(-1)
-        jvel_init = torch.zeros(24 * 3)
+        lj_init = self.forward_kinematics(init_pose)[1][0, joint_set.leaf].view(-1)  # [24]     # 初始姿态的位置
+        jvel_init = torch.zeros(24 * 3) # [72]   # 初始姿态的速度
         x = (normalize_and_concat(glb_acc, glb_rot), lj_init, jvel_init)
         leaf_joint, full_joint, global_6d_pose, joint_velocity, contact = [_[0] for _ in self.forward([x])]
         pose = self._reduced_glb_6d_to_full_local_mat(glb_rot.view(-1, 6, 3, 3)[:, -1], global_6d_pose)
-        joint_velocity = joint_velocity.view(-1, 24, 3).bmm(glb_rot[:, -1].transpose(1, 2)) * vel_scale
-        pose_opt, tran_opt = [], []
+        joint_velocity = joint_velocity.view(-1, 24, 3).bmm(glb_rot[:, -1].transpose(1, 2)) * vel_scale  # 局部关节速度 -- 全局关节速度
+        pose_opt, tran_opt = [], []     # 优化后的姿态和位移向量
         for p, v, c, a in zip(pose, joint_velocity, contact, glb_acc):
             p, t = self.dynamics_optimizer.optimize_frame(p, v, c, a)
             pose_opt.append(p)

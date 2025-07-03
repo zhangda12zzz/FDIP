@@ -1,5 +1,13 @@
+"""
+ImuMotionData 类：用于姿态回归任务的 IMU 数据集处理
+2. 数据转换与增强：
+   - 时间窗口分割：将长序列分割为重叠的固定长度窗口（窗口大小由 args.window_size 控制）
+   - 姿态表示转换：将 SMPL 的 24 关节旋转矩阵（3x3）转换为 R6D 格式（6D 旋转表示）
+   - 数据随机打乱与比例平衡：训练时对数据进行乱序处理，确保数据分布均匀
+"""
+
+
 import os
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 import copy
@@ -169,7 +177,10 @@ class ImuMotionData(Dataset):
         
         # return [self.imus[item].to(self.device), self.joints[item].to(self.device), self.poses[item].to(self.device), self.pose_gan_ref[self.gan_ref_order[item]].to(self.device)]
         return [self.imus[item].to(self.device), self.joints[item].to(self.device), self.poses[item].to(self.device), self.poses[item].to(self.device), self.shapes[item].to(self.device)]
-    
+
+
+
+    #。在训练模式下，它返回部分数据作为测试集；在测试模式下，返回所有数据
     def getValData(self):
         # self.idxCount += 1
         if self.args.is_train:
@@ -180,7 +191,7 @@ class ImuMotionData(Dataset):
             return [self.imus.to(self.device), self.poses.to(self.device), self.roots.to(self.device), self.poses_ref.to(self.device)]
             # return [self.imus, self.joints, self.poses, self.roots, self.poses_ref]
     
-    
+    #时间序列数据分割为多个重叠的窗口。每个窗口的大小由 args.window_size 指定，窗口之间有重叠，类似于卷积操作中的步长（step_size）
     def get_windows(self, input):
         new_windows = []
         self.total_frame = 0
@@ -202,7 +213,9 @@ class ImuMotionData(Dataset):
                 new_window = torch.tensor(new, dtype=torch.float32)
                 new_windows.append(new_window)
         return torch.cat(new_windows)
-    
+
+
+    #将SMPL模型的24关节旋转矩阵转换为R6D格式
     def smpl24ToR6d(self, pose):
         '''
             pose: [n,t,24,3,3]
@@ -219,7 +232,8 @@ class ImuMotionData(Dataset):
         r6d_windows = grot_copy.contiguous()
         r6d_windows = r6d_windows.view(n,t,15,6)
         return r6d_windows
-    
+
+
     def smpl24ToMat(self, pose):
         '''
             pose: [n,t,24,3,3]

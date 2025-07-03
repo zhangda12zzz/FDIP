@@ -1,5 +1,5 @@
 r"""
-    General math utils.
+    通用数学工具。
 """
 
 
@@ -9,30 +9,29 @@ __all__ = ['lerp', 'normalize_tensor', 'append_value', 'append_zero', 'append_on
 
 import numpy as np
 import torch
-from functools import partial
+from functools import partial   #“记住”原始函数的某些固定参数
 
 
 def lerp(a, b, t):
     r"""
-    Linear interpolation (unclamped).
+    线性插值（未限制范围）。
 
-    :param a: Begin value.
-    :param b: End value.
-    :param t: Lerp weight. t = 0 will return a; t = 1 will return b.
-    :return: The linear interpolation value.
+    :param a: 起始值。
+    :param b: 结束值。
+    :param t: 插值权重。t = 0 返回 a；t = 1 返回 b。
+    :return: 线性插值结果。
     """
     return a * (1 - t) + b * t
 
 
 def normalize_tensor(x: torch.Tensor, dim=-1, return_norm=False):
     r"""
-    Normalize a tensor in a specific dimension to unit norm. (torch)
+    将张量在指定维度上归一化为单位范数。（PyTorch）
 
-    :param x: Tensor in any shape.
-    :param dim: The dimension to be normalized.
-    :param return_norm: If True, norm(length) tensor will also be returned.
-    :return: Tensor in the same shape. If return_norm is True, norm tensor in shape [*, 1, *] (1 at dim)
-             will also be returned (keepdim=True).
+    :param x: 任意形状的张量。
+    :param dim: 需要归一化的维度。
+    :param return_norm: 如果为 True，同时返回范数（长度）张量。
+    :return: 相同形状的张量。如果 return_norm 为 True，同时返回形状为 [*, 1, *]（1 在 dim 维度）的范数张量（keepdim=True）。
     """
     norm = x.norm(dim=dim, keepdim=True)
     normalized_x = x / norm
@@ -41,15 +40,14 @@ def normalize_tensor(x: torch.Tensor, dim=-1, return_norm=False):
 
 def append_value(x: torch.Tensor, value: float, dim=-1):
     r"""
-    Append a value to a tensor in a specific dimension. (torch)
+    在指定维度上向张量追加一个值。（PyTorch）
 
-    e.g. append_value(torch.zeros(3, 3, 3), 1, dim=1) will result in a tensor of shape [3, 4, 3] where the extra
-         part of the original tensor are all 1.
+    例如，append_value(torch.zeros(3, 3, 3), 1, dim=1) 将返回一个形状为 [3, 4, 3] 的张量，其中追加的部分为 1。
 
-    :param x: Tensor in any shape.
-    :param value: The value to be appended to the tensor.
-    :param dim: The dimension to be expanded.
-    :return: Tensor in the same shape except for the expanded dimension which is 1 larger.
+    :param x: 任意形状的张量。
+    :param value: 要追加的值。
+    :param dim: 要扩展的维度。
+    :return: 形状相同的张量，除了扩展的维度增加了 1。
     """
     app = torch.ones_like(x.index_select(dim, torch.tensor([0], device=x.device))) * value
     x = torch.cat((x, app), dim=dim)
@@ -62,10 +60,10 @@ append_one = partial(append_value, value=1)
 
 def vector_cross_matrix(x: torch.Tensor):
     r"""
-    Get the skew-symmetric matrix :math:`[v]_\times\in so(3)` for each vector3 `v`. (torch, batch)
+    获取每个向量3 `v` 的斜对称矩阵 :math:`[v]_\times\in so(3)`。（PyTorch，批处理）
 
-    :param x: Tensor that can reshape to [batch_size, 3].
-    :return: The skew-symmetric matrix in shape [batch_size, 3, 3].
+    :param x: 可以重塑为 [batch_size, 3] 的张量。
+    :return: 形状为 [batch_size, 3, 3] 的斜对称矩阵。
     """
     x = x.view(-1, 3)
     zeros = torch.zeros(x.shape[0], device=x.device)
@@ -76,10 +74,10 @@ def vector_cross_matrix(x: torch.Tensor):
 
 def vector_cross_matrix_np(x):
     r"""
-    Get the skew-symmetric matrix :math:`[v]_\times\in so(3)` for vector3 `v`. (numpy, single)
+    获取向量3 `v` 的斜对称矩阵 :math:`[v]_\times\in so(3)`。（NumPy，单例）
 
-    :param x: Vector3 in shape [3].
-    :return: The skew-symmetric matrix in shape [3, 3].
+    :param x: 形状为 [3] 的向量3。
+    :return: 形状为 [3, 3] 的斜对称矩阵。
     """
     return np.array([[0, -x[2], x[1]],
                      [x[2], 0, -x[0]],
@@ -88,10 +86,10 @@ def vector_cross_matrix_np(x):
 
 def block_diagonal_matrix_np(matrix2d_list):
     r"""
-    Generate a block diagonal 2d matrix using a series of 2d matrices. (numpy, single)
+    使用一系列二维矩阵生成块对角矩阵。（NumPy，单例）
 
-    :param matrix2d_list: A list of matrices (2darray).
-    :return: The block diagonal matrix.
+    :param matrix2d_list: 二维矩阵列表（2darray）。
+    :return: 块对角矩阵。
     """
     ret = np.zeros(sum([np.array(m.shape) for m in matrix2d_list]))
     r, c = 0, 0

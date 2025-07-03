@@ -1,6 +1,6 @@
 r"""
-    Spatial math utils that combine linear and angular calculations for rigid bodies.
-    Also contains utils for articulated body kinematics.
+    空间数学工具，用于刚体的线性和角度计算。
+    还包括用于关节体运动学的工具。
 """
 
 
@@ -18,14 +18,13 @@ from functools import partial
 
 def transformation_matrix_np(R, p):
     r"""
-    Get the homogeneous transformation matrix. (numpy, single)
+    获取齐次变换矩阵。(numpy, 单例)
 
-    Transformation matrix :math:`T_{sb} \in SE(3)` of shape [4, 4] can convert points or vectors from b frame
-    to s frame: :math:`x_s = T_{sb}x_b`.
+    变换矩阵 :math:`T_{sb} \in SE(3)` 的形状为 [4, 4]，可以将点或向量从 b 坐标系转换到 s 坐标系：:math:`x_s = T_{sb}x_b`。
 
-    :param R: The rotation of b frame expressed in s frame, R_sb, in shape [3, 3].
-    :param p: The position of b frame expressed in s frame, p_s, in shape [3].
-    :return: The transformation matrix, T_sb, in shape [4, 4].
+    :param R: b 坐标系在 s 坐标系中的旋转矩阵 R_sb，形状为 [3, 3]。
+    :param p: b 坐标系在 s 坐标系中的位置 p_s，形状为 [3]。
+    :return: 变换矩阵 T_sb，形状为 [4, 4]。
     """
     T = np.zeros((4, 4))
     T[:3, :3] = R
@@ -36,19 +35,18 @@ def transformation_matrix_np(R, p):
 
 def adjoint_transformation_matrix_np(R, p):
     r"""
-    Get the adjoint representation of a transformation matrix. (numpy, single)
+    获取变换矩阵的伴随表示。(numpy, 单例)     # TODO: 待验证：：：和数学中的伴随矩阵的定义不同
 
-    Adjoint matrix :math:`[Ad_{T_{sb}}]` of shape [6, 6] can convert spatial twist/wrench/Jacobian between b/s frames.
-
+    伴随矩阵 :math:`[Ad_{T_{sb}}]` 的形状为 [6, 6]，可以在 b/s 坐标系之间转换空间扭转/力/雅可比矩阵。
         :math:`\mathcal{V}_s = [Ad_{T_{sb}}]\mathcal{V}_b`
 
         :math:`\mathcal{F}_b = [Ad_{T_{sb}}]^T\mathcal{F}_s`
 
         :math:`J_s = [Ad_{T_{sb}}]J_b`
 
-    :param R: The rotation of b frame expressed in s frame, R_sb, in shape [3, 3].
-    :param p: The position of b frame expressed in s frame, p_s, in shape [3].
-    :return: The adjoint representation of the transformation matrix T_sb, in shape [6, 6].
+    :param R: b 坐标系在 s 坐标系中的旋转矩阵 R_sb，形状为 [3, 3]。
+    :param p: b 坐标系在 s 坐标系中的位置 p_s，形状为 [3]。
+    :return: 变换矩阵 T_sb 的伴随表示，形状为 [6, 6]。
     """
     AdT = np.zeros((6, 6))
     AdT[:3, :3] = R
@@ -59,14 +57,13 @@ def adjoint_transformation_matrix_np(R, p):
 
 def transformation_matrix(R: torch.Tensor, p: torch.Tensor):
     r"""
-    Get the homogeneous transformation matrices. (torch, batch)
+    获取齐次变换矩阵。(torch, 批量)
 
-    Transformation matrix :math:`T_{sb} \in SE(3)` of shape [4, 4] can convert points or vectors from b frame
-    to s frame: :math:`x_s = T_{sb}x_b`.
+    变换矩阵 :math:`T_{sb} \in SE(3)` 的形状为 [4, 4]，可以将点或向量从 b 坐标系转换到 s 坐标系：:math:`x_s = T_{sb}x_b`。
 
-    :param R: The rotation of b frame expressed in s frame, R_sb, in shape [*, 3, 3].
-    :param p: The position of b frame expressed in s frame, p_s, in shape [*, 3].
-    :return: The transformation matrix, T_sb, in shape [*, 4, 4].
+    :param R: b 坐标系在 s 坐标系中的旋转矩阵 R_sb，形状为 [*, 3, 3]。
+    :param p: b 坐标系在 s 坐标系中的位置 p_s，形状为 [*, 3]。
+    :return: 变换矩阵 T_sb，形状为 [*, 4, 4]。
     """
     Rp = torch.cat((R, p.unsqueeze(-1)), dim=-1)
     OI = torch.cat((torch.zeros(list(Rp.shape[:-2]) + [1, 3], device=R.device),
@@ -77,10 +74,10 @@ def transformation_matrix(R: torch.Tensor, p: torch.Tensor):
 
 def decode_transformation_matrix(T: torch.Tensor):
     r"""
-    Decode rotations and positions from the input homogeneous transformation matrices. (torch, batch)
+    从输入的齐次变换矩阵中解码旋转和位置。(torch, 批量)
 
-    :param T: The transformation matrix in shape [*, 4, 4].
-    :return: Rotation and position, in shape [*, 3, 3] and [*, 3].
+    :param T: 变换矩阵，形状为 [*, 4, 4]。
+    :return: 旋转和位置，形状为 [*, 3, 3] 和 [*, 3]。
     """
     R = T[..., :3, :3].clone()
     p = T[..., :3, 3].clone()
@@ -89,10 +86,10 @@ def decode_transformation_matrix(T: torch.Tensor):
 
 def inverse_transformation_matrix(T: torch.Tensor):
     r"""
-    Get the inverse of the input homogeneous transformation matrices. (torch, batch)
+    获取输入齐次变换矩阵的逆矩阵。(torch, 批量)
 
-    :param T: The transformation matrix in shape [*, 4, 4].
-    :return: Matrix inverse in shape [*, 4, 4].
+    :param T: 变换矩阵，形状为 [*, 4, 4]。
+    :return: 逆矩阵，形状为 [*, 4, 4]。
     """
     R, p = decode_transformation_matrix(T)
     invR = R.transpose(-1, -2)
@@ -101,9 +98,9 @@ def inverse_transformation_matrix(T: torch.Tensor):
     return invT
 
 
-def _forward_tree(x_local: torch.Tensor, parent, reduction_fn):
+def _forward_tree(x_local: torch.Tensor, parent, reduction_fn):     #沿着数结构做某种操作，每一批操作一次
     r"""
-    Multiply/Add matrices along the tree branches. x_local [N, J, *]. parent [J].
+    沿着树分支乘/加矩阵。x_local [N, J, *]。parent [J]。
     """
     x_global = [x_local[:, 0]]
     for i in range(1, len(parent)):
@@ -114,7 +111,7 @@ def _forward_tree(x_local: torch.Tensor, parent, reduction_fn):
 
 def _inverse_tree(x_global: torch.Tensor, parent, reduction_fn, inverse_fn):
     r"""
-    Inversely multiply/add matrices along the tree branches. x_global [N, J, *]. parent [J].
+    沿着树分支逆乘/加矩阵。x_global [N, J, *]。parent [J]。
     """
     x_local = [x_global[:, 0]]
     for i in range(1, len(parent)):
@@ -125,20 +122,19 @@ def _inverse_tree(x_global: torch.Tensor, parent, reduction_fn, inverse_fn):
 
 def bone_vector_to_joint_position(bone_vec: torch.Tensor, parent):
     r"""
-    Calculate joint positions in the base frame from bone vectors (position difference of child and parent joint)
-    in the base frame. (torch, batch)
+    从骨骼向量（子关节和父关节的位置差）计算关节在基础坐标系中的位置。(torch, 批量)
 
-    Notes
+    注意
     -----
-    bone_vec[:, i] is the vector from parent[i] to i.
+    bone_vec[:, i] 是从 parent[i] 到 i 的向量。
 
-    parent[i] should be the parent joint id of joint i. parent[i] must be smaller than i for any i > 0.
+    parent[i] 应该是关节 i 的父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param bone_vec: Bone vector tensor in shape [batch_size, *] that can reshape to [batch_size, num_joint, 3].
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Joint position, in shape [batch_size, num_joint, 3].
+    :param bone_vec: 骨骼向量张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 3]。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 关节位置，形状为 [batch_size, num_joint, 3]。
     """
     bone_vec = bone_vec.view(bone_vec.shape[0], -1, 3)
     joint_pos = _forward_tree(bone_vec, parent, torch.add)
@@ -147,20 +143,19 @@ def bone_vector_to_joint_position(bone_vec: torch.Tensor, parent):
 
 def joint_position_to_bone_vector(joint_pos: torch.Tensor, parent):
     r"""
-    Calculate bone vectors (position difference of child and parent joint) in the base frame from joint positions
-    in the base frame. (torch, batch)
+    从关节在基础坐标系中的位置计算骨骼向量（子关节和父关节的位置差）。(torch, 批量)
 
-    Notes
+    注意
     -----
-    bone_vec[:, i] is the vector from parent[i] to i.
+    bone_vec[:, i] 是从 parent[i] 到 i 的向量。
 
-    parent[i] should be the parent joint id of joint i. parent[i] must be smaller than i for any i > 0.
+    parent[i] 应该是关节 i 的父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param joint_pos: Joint position tensor in shape [batch_size, *] that can reshape to [batch_size, num_joint, 3].
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Bone vector, in shape [batch_size, num_joint, 3].
+    :param joint_pos: 关节位置张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 3]。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 骨骼向量，形状为 [batch_size, num_joint, 3]。
     """
     joint_pos = joint_pos.view(joint_pos.shape[0], -1, 3)
     bone_vec = _inverse_tree(joint_pos, parent, torch.add, torch.neg)
@@ -171,23 +166,21 @@ def forward_kinematics_R(R_local: torch.Tensor, parent):
     r"""
     :math:`R_global = FK(R_local)`
 
-    Forward kinematics that computes the global rotation of each joint from local rotations. (torch, batch)
+    正向运动学，从局部旋转计算每个关节的全局旋转。(torch, 批量)
 
-    Notes
+    注意
     -----
-    A joint's *local* rotation is expressed in its parent's frame.
+    关节的 *局部* 旋转在其父坐标系中表示。
 
-    A joint's *global* rotation is expressed in the base (root's parent) frame.
+    关节的 *全局* 旋转在基础（根父）坐标系中表示。
 
-    R_local[:, i], parent[i] should be the local rotation and parent joint id of
-    joint i. parent[i] must be smaller than i for any i > 0.
+    R_local[:, i], parent[i] 应该是关节 i 的局部旋转和父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param R_local: Joint local rotation tensor in shape [batch_size, *] that can reshape to
-                    [batch_size, num_joint, 3, 3] (rotation matrices).
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Joint global rotation, in shape [batch_size, num_joint, 3, 3].
+    :param R_local: 关节局部旋转张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 3, 3]（旋转矩阵）。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 关节全局旋转，形状为 [batch_size, num_joint, 3, 3]。
     """
     R_local = R_local.view(R_local.shape[0], -1, 3, 3)
     R_global = _forward_tree(R_local, parent, torch.bmm)
@@ -198,23 +191,21 @@ def inverse_kinematics_R(R_global: torch.Tensor, parent):
     r"""
     :math:`R_local = IK(R_global)`
 
-    Inverse kinematics that computes the local rotation of each joint from global rotations. (torch, batch)
+    逆向运动学，从全局旋转计算每个关节的局部旋转。(torch, 批量)
 
-    Notes
+    注意
     -----
-    A joint's *local* rotation is expressed in its parent's frame.
+    关节的 *局部* 旋转在其父坐标系中表示。
 
-    A joint's *global* rotation is expressed in the base (root's parent) frame.
+    关节的 *全局* 旋转在基础（根父）坐标系中表示。
 
-    R_global[:, i], parent[i] should be the global rotation and parent joint id of
-    joint i. parent[i] must be smaller than i for any i > 0.
+    R_global[:, i], parent[i] 应该是关节 i 的全局旋转和父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param R_global: Joint global rotation tensor in shape [batch_size, *] that can reshape to
-                     [batch_size, num_joint, 3, 3] (rotation matrices).
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Joint local rotation, in shape [batch_size, num_joint, 3, 3].
+    :param R_global: 关节全局旋转张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 3, 3]（旋转矩阵）。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 关节局部旋转，形状为 [batch_size, num_joint, 3, 3]。
     """
     R_global = R_global.view(R_global.shape[0], -1, 3, 3)
     R_local = _inverse_tree(R_global, parent, torch.bmm, partial(torch.transpose, dim0=1, dim1=2))
@@ -225,24 +216,21 @@ def forward_kinematics_T(T_local: torch.Tensor, parent):
     r"""
     :math:`T_global = FK(T_local)`
 
-    Forward kinematics that computes the global homogeneous transformation of each joint from
-    local homogeneous transformations. (torch, batch)
+    正向运动学，从局部齐次变换计算每个关节的全局齐次变换。(torch, 批量)
 
-    Notes
+    注意
     -----
-    A joint's *local* transformation is expressed in its parent's frame.
+    关节的 *局部* 变换在其父坐标系中表示。
 
-    A joint's *global* transformation is expressed in the base (root's parent) frame.
+    关节的 *全局* 变换在基础（根父）坐标系中表示。
 
-    T_local[:, i], parent[i] should be the local transformation matrix and parent joint id of
-    joint i. parent[i] must be smaller than i for any i > 0.
+    T_local[:, i], parent[i] 应该是关节 i 的局部变换矩阵和父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param T_local: Joint local transformation tensor in shape [batch_size, *] that can reshape to
-                    [batch_size, num_joint, 4, 4] (homogeneous transformation matrices).
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Joint global transformation matrix, in shape [batch_size, num_joint, 4, 4].
+    :param T_local: 关节局部变换张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 4, 4]（齐次变换矩阵）。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 关节全局变换矩阵，形状为 [batch_size, num_joint, 4, 4]。
     """
     T_local = T_local.view(T_local.shape[0], -1, 4, 4)
     T_global = _forward_tree(T_local, parent, torch.bmm)
@@ -253,47 +241,42 @@ def inverse_kinematics_T(T_global: torch.Tensor, parent):
     r"""
     :math:`T_local = IK(T_global)`
 
-    Inverse kinematics that computes the local homogeneous transformation of each joint from
-    global homogeneous transformations. (torch, batch)
+    逆向运动学，从全局齐次变换计算每个关节的局部齐次变换。(torch, 批量)
 
-    Notes
+    注意
     -----
-    A joint's *local* transformation is expressed in its parent's frame.
+    关节的 *局部* 变换在其父坐标系中表示。
 
-    A joint's *global* transformation is expressed in the base (root's parent) frame.
+    关节的 *全局* 变换在基础（根父）坐标系中表示。
 
-    T_global[:, i], parent[i] should be the global transformation matrix and parent joint id of
-    joint i. parent[i] must be smaller than i for any i > 0.
+    T_global[:, i], parent[i] 应该是关节 i 的全局变换矩阵和父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
-    :param T_global: Joint global transformation tensor in shape [batch_size, *] that can reshape to
-                    [batch_size, num_joint, 4, 4] (homogeneous transformation matrices).
-    :param parent: Parent joint id list in shape [num_joint]. Use -1 or None for base id (parent[0]).
-    :return: Joint local transformation matrix, in shape [batch_size, num_joint, 4, 4].
+    :param T_global: 关节全局变换张量，形状为 [batch_size, *]，可以重塑为 [batch_size, num_joint, 4, 4]（齐次变换矩阵）。
+    :param parent: 父关节 ID 列表，形状为 [num_joint]。对于基础 ID（parent[0]），使用 -1 或 None。
+    :return: 关节局部变换矩阵，形状为 [batch_size, num_joint, 4, 4]。
     """
     T_global = T_global.view(T_global.shape[0], -1, 4, 4)
     T_local = _inverse_tree(T_global, parent, torch.bmm, inverse_transformation_matrix)
     return T_local
 
 
-def forward_kinematics(R_local: torch.Tensor, p_local: torch.Tensor, parent):
+def forward_kinematics(R_local: torch.Tensor, p_local: torch.Tensor, parent):   #正向运动学不用其次变换
     r"""
     :math:`R_global, p_global = FK(R_local, p_local)`
 
-    Forward kinematics that computes the global rotation and position of each joint from
-    local rotations and positions. (torch, batch)
+    正向运动学，从局部旋转和位置计算每个关节的全局旋转和位置。(torch, 批量)
 
-    Notes
+    注意
     -----
-    A joint's *local* rotation and position are expressed in its parent's frame.
+    关节的 *局部* 旋转和位置在其父坐标系中表示。
 
-    A joint's *global* rotation and position are expressed in the base (root's parent) frame.
+    关节的 *全局* 旋转和位置在基础（根父）坐标系中表示。
 
-    R_local[:, i], p_local[:, i], parent[i] should be the local rotation, local position, and parent joint id of
-    joint i. parent[i] must be smaller than i for any i > 0.
+    R_local[:, i], p_local[:, i], parent[i] 应该是关节 i 的局部旋转、局部位置和父关节 ID。对于任何 i > 0，parent[i] 必须小于 i。
 
-    Args
+    参数
     -----
     :param R_local: Joint local rotation tensor in shape [batch_size, *] that can reshape to
                     [batch_size, num_joint, 3, 3] (rotation matrices).

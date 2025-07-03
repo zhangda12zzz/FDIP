@@ -1,6 +1,13 @@
 import os
 import torch
 
+
+"""
+IntegratedModelGIP 类实现了一个包含生成器（pose_encoder）和判别器（discriminator）的集成模型。
+生成器处理骨骼姿势编码，判别器用于判断生成的动作是否真实。
+通过 parameters 方法，合并生成器和判别器的所有可训练参数。
+save 和 load 方法用于保存和加载模型的权重，以便在训练过程中进行检查点保存和恢复。
+"""
 from model.ref_Transpose import TransPoseNet
 from model.ref_pip import PIP
 from model.motion_discriminator import MotionDiscriminator

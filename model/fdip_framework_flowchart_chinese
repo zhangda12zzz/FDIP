@@ -1,0 +1,59 @@
+// FDIP 人体姿态估计框架
+digraph FDIP_Framework {
+	compound=true fontsize=20 label="FDIP 框架：基于IMU的人体姿态估计" labelloc=t rankdir=TB
+	graph [concentrate=true fontname=SimHei nodesep=0.6 ranksep=0.8 splines=ortho]
+	node [fontname=SimHei fontsize=10 shape=box style="rounded,filled"]
+	edge [fontname=SimHei fontsize=9]
+	imu_data [label="6个IMU传感器
+(左/右脚踝, 头部, 左/右手腕, 骨盆)
+(加速度与方向数据)" fillcolor=lightgrey]
+	rl [label="叶关节位置回归 (RL)
+(推断叶关节相对位置)" fillcolor=skyblue]
+	ra [label="全关节位置回归 (RA)
+(推断全关节相对位置)" fillcolor=skyblue]
+	imu_data -> rl [label="稀疏IMU测量数据"]
+	rl -> ra [label="叶关节位置 (RL输出)"]
+	subgraph cluster_rp {
+		color=lightsteelblue fontname=SimHei fontsize=12 label="姿态回归 (RP) 阶段" peripheries=1 style=filled
+		rp_entry_from_ra [height=0.01 shape=point width=0.01 xlabel="来自RA (全关节位置)"]
+		subgraph cluster_msfke {
+			color=palegreen fontname=SimHei fontsize=10 label="多尺度频域运动学编码器 (MSFKE)" peripheries=1 style=filled
+			msfke_input_imu [label="IMU时序信号" fillcolor=aliceblue]
+			dilated_conv [label="空洞卷积
+(IMU分解为多尺度频域表示)" fillcolor=aliceblue]
+			se_modules [label="2x 挤压-激励 (SE) 模块
+(自适应加权, 抑制冗余)" fillcolor=aliceblue]
+			msfke_output [label="紧凑的全局躯体与细节运动
+频率混合表示" fillcolor=aliceblue]
+			msfke_input_imu -> dilated_conv
+			dilated_conv -> se_modules
+			se_modules -> msfke_output
+		}
+		subgraph cluster_dstfpe {
+			color=lightgoldenrodyellow fontname=SimHei fontsize=10 label="双流时空融合姿态估计器 (DSTFPE)" peripheries=1 style=filled
+			dstfpe_entry_from_msfke [height=0.01 shape=point width=0.01 xlabel="来自MSFKE"]
+			st_gcn [label="时空图卷积网络 (ST-GCN)
+(骨骼拓扑长期运动演变)" fillcolor=aliceblue]
+			bigru [label="双向门控循环单元 (biGRU)
+(四肢瞬时动态特征)" fillcolor=aliceblue]
+			fusion [label="多头注意力机制
+(特征融合)" fillcolor=lightpink]
+			linear_regression [label="线性回归层
+(推断姿态参数)" fillcolor=skyblue]
+			dstfpe_entry_from_msfke -> st_gcn [label="分流特征"]
+			dstfpe_entry_from_msfke -> bigru [label="分流特征"]
+			st_gcn -> fusion
+			bigru -> fusion
+			fusion -> linear_regression [label="融合特征"]
+		}
+		msfke_output -> dstfpe_entry_from_msfke [lhead=cluster_dstfpe ltail=cluster_msfke]
+		rp_entry_from_ra -> linear_regression [label="全关节位置 (来自RA)
+(用于最终姿态估计)" lhead=cluster_dstfpe style=dashed]
+	}
+	imu_data -> msfke_input_imu [label="IMU时序信号
+(MSFKE使用)" lhead=cluster_msfke]
+	ra -> rp_entry_from_ra [label="全关节位置 (RA输出)" lhead=cluster_rp]
+	final_pose [label="最终姿态
+(全局位姿变换矩阵)" fillcolor=lightgrey]
+	linear_regression -> final_pose [label="估计的最终姿态" ltail=cluster_rp]
+}
