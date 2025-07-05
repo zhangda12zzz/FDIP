@@ -1,12 +1,12 @@
 # GAIP
 
-基于图对抗的惯性姿态估计(GAIP)源代码
+FDIP源代码
 
 ## 使用说明
 
 ### 依赖环境
 
-我们使用 `python 3.7.6`。你可以通过 `requirements.py` 安装所需的包。
+我们使用 `python 3.8.20`。你可以通过 `requirements.py` 安装所需的包。
 
 ### SMPL人体模型
 
