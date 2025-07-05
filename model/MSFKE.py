@@ -253,7 +253,7 @@ class NodeAwareMSFKE(nn.Module):
             self.base_channels = int(base_channels * 1.5)
 
         # 节点编码 - 每个节点有唯一embedding
-        self.node_embedding = nn.Parameter(torch.randn(num_nodes, 16))   #16是嵌入量大小，用多少维度来表示节点
+        self.node_embedding = nn.Parameter(torch.randn(self.num_nodes, 16))   #16是嵌入量大小，用多少维度来表示节点
 
         # 为每个节点构建多尺度分支
         # self.node_branches = nn.ModuleList([
@@ -371,3 +371,4 @@ class NodeAwareMSFKE(nn.Module):
             'limb_branch_weights': torch.stack(limb_weights_list, dim=1),
             'dilation_rates': self.dilation_rates
         }
+
