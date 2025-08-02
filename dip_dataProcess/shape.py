@@ -171,7 +171,7 @@ if __name__ == "__main__":
     #Type: <class 'list'>
     #Ka_Gaip:   len:60   value[0]: torch.Size([13766, 24, 3, 3])
 
-    pt_file_path = r"F:\CodeForPaper\Dataset\AMASS\HumanEva\pt\joint.pt"
+    pt_file_path = r"D:\Dataset\SingleOne\Pt\vacc.pt"
     # Type: <class 'list'>
     #   Ka_Gaip:   len:28   value[0]: torch.Size([1372, 6, 3])
 

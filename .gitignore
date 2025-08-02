@@ -15,3 +15,8 @@ model/weight
 train/checkpoints/
 train/logs/
 train/para.txt
+train/log/
+train/GGIP/
+SMPL/
+Weight/
+data/

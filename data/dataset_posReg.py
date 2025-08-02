@@ -64,7 +64,7 @@ class ImuDataset(Dataset):
         
         # 对过长的序列进行一些裁剪操作
         self.max_frame_length = 300
-        self.stride = 60  # 每次移动的步长
+        self.stride = 150  # 每次移动的步长
         self.min_frame_length = 100
         self.pose = []
         self.acc = []

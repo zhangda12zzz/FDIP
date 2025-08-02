@@ -11,11 +11,11 @@ import torch
 #               'BioMotionLab_NTroje', 'BMLhandball', 'MPI_Limits', 'DFaust67']
 amass_data = ['ACC BMLrub', 'CMU', 'DanceDB', 'DFaust', 'EKUT', 'EyesJapanDataset',
               'HDM05', 'HUMAN4D', 'HEva', 'KIT', 'Mosh', 'SFU', 'TotalCapture', 'Transitions', 'PosePrior', 'SSM', 'TCDHands']
-amass_data_test_tmp = ['HumanEva']
+amass_data_test_tmp = ['DanceDB']
 
 class paths:
-    raw_amass_dir = r'F:\CodeForPaper\Dataset\AMASS'      # 原始 AMASS 数据集路径
-    amass_dir = 'D:\Dataset\AMASS\HumanEva\pt'    # 处理后的 AMASS 数据集输出路径
+    raw_amass_dir = r'D:\Dataset\AMASS'      # 原始 AMASS 数据集路径
+    amass_dir = 'D:\Dataset\AMASS\DanceDB\pt'    # 处理后的 AMASS 数据集输出路径
 
     raw_dipimu_dir = 'F:\CodeForPaper\Dataset\DIPIMUandOthers\DIP_IMU\DIP_IMU'   # 原始 DIP-IMU 数据集路径
     dipimu_dir = 'D:\Dataset\DIPIMUandOthers\DIP_6\Detail'      # 处理后的 DIP-IMU 数据集输出路径
@@ -29,7 +29,7 @@ class paths:
 
     result_dir = 'data/result'                                 # 评估结果输出目录
 
-    smpl_file ='I:\python\Ka_GAIP\data\SMPLmodel\basicmodel_m_lbs_10_207_0_v1.0.0.pkl'           # 官方 SMPL 模型路径
+    smpl_file =r'I:\python\Ka_GAIP\data\SMPLmodel\basicmodel_m_lbs_10_207_0_v1.0.0.pkl'           # 官方 SMPL 模型路径
 
     physics_model_file = 'models/urdfmodels/physics.urdf'      # 物理模型路径
     plane_file = 'models/urdfmodels/plane.urdf'                # 平面模型路径（用于调试）

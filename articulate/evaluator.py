@@ -317,15 +317,15 @@ class FullMotionEvaluator(BasePoseEvaluator):
         f = self.fps
         pose_local_p, shape_p, tran_p = self._preprocess(pose_p, shape_p, tran_p)
         pose_local_t, shape_t, tran_t = self._preprocess(pose_t, shape_t, tran_t)
-        # pose_global_p, joint_p, vertex_p = self.model.forward_kinematics(pose_local_p, shape_p, tran_p, calc_mesh=True)
-        # pose_global_t, joint_t, vertex_t = self.model.forward_kinematics(pose_local_t, shape_t, tran_t, calc_mesh=True)
-        pose_global_p, joint_p = self.model.forward_kinematics(pose_local_p, shape_p, tran_p, calc_mesh=False)
-        pose_global_t, joint_t = self.model.forward_kinematics(pose_local_t, shape_t, tran_t, calc_mesh=False)
+        pose_global_p, joint_p, vertex_p = self.model.forward_kinematics(pose_local_p, shape_p, tran_p, calc_mesh=True)
+        pose_global_t, joint_t, vertex_t = self.model.forward_kinematics(pose_local_t, shape_t, tran_t, calc_mesh=True)
+        # pose_global_p, joint_p = self.model.forward_kinematics(pose_local_p, shape_p, tran_p, calc_mesh=False)
+        # pose_global_t, joint_t = self.model.forward_kinematics(pose_local_t, shape_t, tran_t, calc_mesh=False)
 
 
         offset_from_p_to_t = (joint_t[:, self.align_joint] - joint_p[:, self.align_joint]).unsqueeze(1)
         tre = (joint_p - joint_t).norm(dim=2)                         # N, J
-        # ve = (vertex_p + offset_from_p_to_t - vertex_t).norm(dim=2)   # N, J
+        ve = (vertex_p + offset_from_p_to_t - vertex_t).norm(dim=2)   # N, J
         je = (joint_p + offset_from_p_to_t - joint_t).norm(dim=2)     # N, J
         lae = radian_to_degree(angle_between(pose_local_p, pose_local_t).view(pose_p.shape[0], -1))           # N, J
         gae = radian_to_degree(angle_between(pose_global_p, pose_global_t).view(pose_p.shape[0], -1))         # N, J
@@ -338,7 +338,7 @@ class FullMotionEvaluator(BasePoseEvaluator):
 
         return torch.tensor([[je.mean(),   je.std(dim=0).mean()],
                              [0,0],
-                            #  [ve.mean(),   ve.std(dim=0).mean()],
+                             [ve.mean(),   ve.std(dim=0).mean()],
                              [lae.mean(),  lae.std(dim=0).mean()],
                              [gae.mean(),  gae.std(dim=0).mean()],
                              [jkp.mean(),  jkp.std(dim=0).mean()],

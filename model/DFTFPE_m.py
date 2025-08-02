@@ -50,10 +50,10 @@ class GraphConvBlock(nn.Module):
         res = res.reshape(batch_size, seq_len, num_nodes, -1)
 
         # 深度可分离图卷积
-        x_depth = self.depthwise_conv(x)                        # 深度卷积
+        x_depth = self.depthwise_conv(x)  # 深度卷积
         adj_matrix = A if A is not None else self.A
         x_conv = torch.einsum('nm,bsmd->bsnd', adj_matrix, x_depth)
-        x_point = self.pointwise_conv(x_conv)                   # 逐点卷积
+        x_point = self.pointwise_conv(x_conv)  # 逐点卷积
 
         # 修复通道注意力计算
         x_flat = x_point.reshape(batch_size * seq_len, num_nodes, -1)
@@ -164,7 +164,7 @@ class SpatioTemporalGCN(nn.Module):
             self.graph = Graph_A(strategy="uniform")
             self.num_joints = 24
             self.A = self.graph.A_a
-            self.need_mapping = True    # 6 -> 24
+            self.need_mapping = True
             self.map_sensor2joints = nn.Conv1d(in_channels=self.sensor_joints,
                                                out_channels=self.num_joints,
                                                kernel_size=1,

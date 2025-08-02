@@ -120,7 +120,7 @@ class FDIP_1(nn.Module):
         self.msfke = NodeAwareMSFKE(
             input_channels=input_dim//num_nodes,  # 每个节点的输入特征维度(54/6=9)
             num_nodes=num_nodes,  # 节点数量(共6个节点)
-            base_channels=128,  # 与原始模型相同
+            base_channels=32,  # 与原始模型相同
             num_scales=5,  # 频率尺度数量
             node_feature_dim=18,  # 每个节点的输出特征维度(108/6=18)
             stage='early',
@@ -172,7 +172,7 @@ class FDIP_2(nn.Module):
             input_channels=input_dim//num_nodes,  # 每个节点的输入特征维度(18/6=3)
             num_nodes=num_nodes,  # 节点数量(共6个节点)
             node_feature_dim=feature_dim//num_nodes,
-            base_channels=128,  # 每个频段的通道数
+            base_channels=32,  # 每个频段的通道数
             num_scales=5,  # 频率尺度数量
             stage='mid',
         )
@@ -182,7 +182,7 @@ class FDIP_2(nn.Module):
             num_nodes=num_nodes,  # 节点数量(共6个节点)
             trunk_dim=feature_dim,
             limb_dim=feature_dim,
-            hidden_dim=128,
+            hidden_dim=256,
             output_dim=output_dim,  #24*3位置
             num_heads=8,
             stage='mid',
@@ -227,7 +227,7 @@ class FDIP_3(nn.Module):
         self.msfke = NodeAwareMSFKE(
             input_channels=input_dim//self.num_nodes,
             num_nodes=self.num_nodes,
-            base_channels=128,
+            base_channels=32,
             num_scales=5,  # 频率尺度数量
             node_feature_dim=self.feature_dim ,
             stage='late',
@@ -325,7 +325,7 @@ class FDIP_Masked(nn.Module):
         self.msfke = NodeAwareMSFKE(
             input_channels=self.node_feature_dim,
             num_nodes=self.num_nodes,
-            base_channels=128, num_scales=5, node_feature_dim=self.node_feature_dim * 2, stage='late',
+            base_channels=32, num_scales=5, node_feature_dim=self.node_feature_dim * 2, stage='late',
         )
 
         self.dstfpe = DSTFPE(

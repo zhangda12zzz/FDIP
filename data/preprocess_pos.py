@@ -386,9 +386,9 @@ def process_from_npy():
 
 
 if __name__ == '__main__':
-    #process_amass()
-    #process_dipimu()
-    #process_totalcapture()
-
-    #split_totalcapture_data()
-    process_from_npy()
+    process_amass()
+    # #process_dipimu()
+    # #process_totalcapture()
+    #
+    # #split_totalcapture_data()
+    # process_from_npy()
