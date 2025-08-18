@@ -17,6 +17,7 @@ train/logs/
 train/para.txt
 train/log/
 train/GGIP/
-SMPL/
 Weight/
-data/
+data/data
+data/pt_analysis_results
+eval_GGIP/test_results_20250803_162523
