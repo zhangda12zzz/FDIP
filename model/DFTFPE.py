@@ -143,7 +143,7 @@ class TemporalConvBlock(nn.Module):
 # 轻量化时空图卷积网络
 # -------------------------------
 class SpatioTemporalGCN(nn.Module):
-    def __init__(self, in_channels, hidden_dim, num_joints=6, stage='early'):
+    def __init__(self, in_channels, hidden_dim, num_joints=6, stage='early', dropout=0.1):
         """
         轻量化时空图卷积网络，用于处理IMU数据的时空关系
 
@@ -175,6 +175,8 @@ class SpatioTemporalGCN(nn.Module):
             self.A = self.graph.A_a
             self.need_mapping = False
 
+        self.dropout_rate = dropout
+
         # 构建IMU节点图结构
         graph_adj = torch.tensor(self.A, dtype=torch.float32, requires_grad=False)
         if len(graph_adj.shape) == 3:
@@ -201,7 +203,7 @@ class SpatioTemporalGCN(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim // 2, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.1)
+            nn.Dropout(self.dropout_rate)
         )
 
     def forward(self, x):
@@ -251,7 +253,7 @@ class AsymmetricBidirectionalGRU(nn.Module):
         if stage == 'early':
             self.window_size = int(self.frame_rate * 0.8)
             self.current_frame_idx = int(self.window_size * 2 // 3)
-            self.droupout = 0.1
+            self.droupout = 0.2
             self.stride = max(1, frame_rate // 10)
         elif stage == 'mid':
             self.window_size = int(self.frame_rate * 0.6)
@@ -550,20 +552,23 @@ class DSTFPE(nn.Module):
         super().__init__()
         self.stage = stage
 
-        # --- 将阶段(stage)映射到具体的温度值 ---
-        self.temperature_map = {
-            'early': 2.0,  # 早期阶段：高温度，平滑注意力
-            'mid': 1.0,  # 中期阶段：标准温度
-            'late': 0.5  # 后期阶段：低温度，锐化注意力
+        # --- 阶段特定的温度和dropout配置 ---
+        stage_config = {
+            'early': {'temperature': 2.0, 'dropout': 0.1},
+            'mid': {'temperature': 1.0, 'dropout': 0.15},
+            'late': {'temperature': 0.5, 'dropout': 0.2}
         }
-        self.temperature = self.temperature_map.get(self.stage, 1.0)
+        config = stage_config.get(self.stage, stage_config['mid'])    # mid作为默认值
+        self.temperature = config['temperature']
+        self.dropout_rate = config['dropout']
 
         # 轻量化全局路径：时空图卷积
         self.st_gcn = SpatioTemporalGCN(
             in_channels=trunk_dim // num_nodes,
             hidden_dim=hidden_dim,
             num_joints=num_nodes,
-            stage=self.stage
+            stage=self.stage,
+            dropout = self.dropout_rate
         )
 
         # 细节路径：双向GRU（保持原样）
@@ -579,7 +584,7 @@ class DSTFPE(nn.Module):
             num_heads=num_heads,
             num_layers=2,
             output_dim=output_dim,
-            dropout=0.1
+            dropout=self.dropout_rate
         )
 
     def forward(self, trunk_features, limb_features):

@@ -16,15 +16,17 @@ import json
 import pickle    # 序列化
 import pandas as pd   # 表格数据分析
 from datetime import datetime
+from articulate.math import r6d_to_rotation_matrix
 from data.dataset_posReg import ImuDataset
 from model.net_zd import FDIP_1, FDIP_2, FDIP_3
 from evaluator import PoseEvaluator, PerFramePoseEvaluator   # 整体、逐帧姿态评估
 import gc
+import argparse
 
 # --- Configuration ---
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'  # 设置使用的GPU
 LEARNING_RATE = 1e-4
-WEIGHT_DECAY = 1e-5                       # 正则化参数，控制权重衰减
+WEIGHT_DECAY = 1e-3                       # 正则化参数，控制权重衰减
 BATCH_SIZE = 64
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 LOG_ENABLED = True
@@ -32,8 +34,8 @@ TRAIN_PERCENT = 0.9
 BATCH_SIZE_VAL = 32
 SEED = 42
 
-PATIENCE = 10
-MAX_EPOCHS = 150                          # 设置一个较高的上限，由早停来决定最佳轮数
+PATIENCE = 20
+MAX_EPOCHS = 150
 DELTA = 0
 
 # --- Paths ---
@@ -41,15 +43,120 @@ DELTA = 0
 TRAIN_DATA_FOLDERS = [
     os.path.join("D:\\", "Dataset", "TotalCapture_Real_60FPS", "KaPt", "split_actions"),
     os.path.join("D:\\", "Dataset", "DIPIMUandOthers", "DIP_6", "Detail"),
-    # os.path.join("D:\\", "Dataset", "AMASS", "DanceDB", "pt")
+    os.path.join("D:\\", "Dataset", "AMASS", "DanceDB", "pt"),
+    os.path.join("D:\\", "Dataset", "AMASS", "HumanEva", "pt"),
+
 ]
 VAL_DATA_FOLDERS = [
-    os.path.join("D:\\", "Dataset", "AMASS", "HumanEva", "pt"),
+    os.path.join("D:\\", "Dataset", "SingleOne",  "pt"),
 ]
 
-CHECKPOINT_DIR = os.path.join("GGIP", "checkpoints")
+TIMESTAMP = None
+CHECKPOINT_DIR = None
 LOG_DIR = "log"
-EVAL_PLOTS_DIR = "evaluation_plots"     # 存储评估生成图表
+LOG_RUN_DIR = None
+
+
+class DataNormalizer:
+    """数据标准化器，确保训练集和验证集使用相同的归一化参数"""
+    def __init__(self):
+        self.stats = {}
+        self.fitted = False
+
+    def fit(self, data_loader, device=DEVICE):
+        """在训练集上拟合统计量"""
+        print("Computing normalization statistics from training data...")
+
+        # 初始化累积变量
+        acc_sum = torch.zeros(6, 3, device=device)  # 6个传感器，3轴加速度
+        ori_sum = torch.zeros(6, 6, device=device)  # 6个传感器，6D方向
+        acc_sq_sum = torch.zeros(6, 3, device=device)
+        ori_sq_sum = torch.zeros(6, 6, device=device)
+
+        total_samples = 0
+
+        with torch.no_grad():
+            for batch_idx, data in enumerate(tqdm(data_loader, desc="Computing stats")):
+                acc = data[0].to(device, non_blocking=True).float()  # [B, S, 6, 3]
+                ori_6d = data[2].to(device, non_blocking=True).float()  # [B, S, 6, 6]
+
+                batch_size, seq_len = acc.shape[:2]
+
+                # 重塑为 [B*S, 6, 3] 和 [B*S, 6, 6]
+                acc_flat = acc.view(-1, 6, 3)
+                ori_flat = ori_6d.view(-1, 6, 6)
+
+                # 累积统计量
+                acc_sum += acc_flat.sum(dim=0)
+                ori_sum += ori_flat.sum(dim=0)
+                acc_sq_sum += (acc_flat ** 2).sum(dim=0)
+                ori_sq_sum += (ori_flat ** 2).sum(dim=0)
+
+                total_samples += batch_size * seq_len
+
+                # 为了节省内存，只使用部分数据计算统计量
+                if batch_idx >= 100:  # 使用前100个batch计算统计量
+                    break
+
+        # 计算均值和标准差
+        self.stats['acc_mean'] = acc_sum / total_samples
+        self.stats['ori_mean'] = ori_sum / total_samples
+        self.stats['acc_std'] = torch.sqrt(acc_sq_sum / total_samples - self.stats['acc_mean'] ** 2)
+        self.stats['ori_std'] = torch.sqrt(ori_sq_sum / total_samples - self.stats['ori_mean'] ** 2)
+
+        # 防止标准差为0
+        self.stats['acc_std'] = torch.clamp(self.stats['acc_std'], min=1e-6)
+        self.stats['ori_std'] = torch.clamp(self.stats['ori_std'], min=1e-6)
+
+        self.fitted = True
+
+        # 打印统计信息
+        print("Normalization statistics computed:")
+        print(f"  Acc mean: {self.stats['acc_mean'].mean().item():.6f}")
+        print(f"  Acc std: {self.stats['acc_std'].mean().item():.6f}")
+        print(f"  Ori mean: {self.stats['ori_mean'].mean().item():.6f}")
+        print(f"  Ori std: {self.stats['ori_std'].mean().item():.6f}")
+
+    def transform_batch(self, acc, ori_6d):
+        """对单个batch进行标准化"""
+        if not self.fitted:
+            raise ValueError("Normalizer must be fitted before transform")
+
+        # 标准化
+        acc_norm = (acc - self.stats['acc_mean'].unsqueeze(0).unsqueeze(0)) / self.stats['acc_std'].unsqueeze(
+            0).unsqueeze(0)
+        ori_norm = (ori_6d - self.stats['ori_mean'].unsqueeze(0).unsqueeze(0)) / self.stats['ori_std'].unsqueeze(
+            0).unsqueeze(0)
+
+        return acc_norm, ori_norm
+
+    def save_stats(self, path):
+        """保存归一化统计量"""
+        if self.fitted:
+            torch.save(self.stats, path)
+            print(f"Normalization stats saved to: {path}")
+
+    def load_stats(self, path):
+        """加载归一化统计量"""
+        self.stats = torch.load(path)
+        self.fitted = True
+        print(f"Normalization stats loaded from: {path}")
+
+
+def create_directories():
+    """创建必要的目录，log内部带时间戳子文件夹。"""
+    dirs = [
+        os.path.join(CHECKPOINT_DIR, "ggip1"),
+        os.path.join(CHECKPOINT_DIR, "ggip2"),
+        os.path.join(CHECKPOINT_DIR, "ggip3"),
+        LOG_DIR,
+        LOG_RUN_DIR,
+    ]
+    for dir_path in dirs:
+        os.makedirs(dir_path, exist_ok=True)
+    print(f"Directories created with timestamp {TIMESTAMP}:")
+    for dir_path in dirs:
+        print(f"  - {dir_path}")
 
 def set_seed(seed):
     """设置随机种子以确保可复现性"""
@@ -63,6 +170,38 @@ def set_seed(seed):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False  # True可能加速但引入不确定性
     print(f"Random seed set to {seed}")
+
+
+def setup_directories_and_paths(args):
+    """根据命令行参数设置全局路径变量"""
+    global TIMESTAMP, CHECKPOINT_DIR, LOG_RUN_DIR
+
+    # 确定时间戳和检查点目录
+    if args.resume:
+        TIMESTAMP = args.resume
+        CHECKPOINT_DIR = os.path.join("GGIP", f"checkpoints_{TIMESTAMP}")
+        print(f"Resuming training from timestamp: {TIMESTAMP}")
+    elif args.checkpoint_dir:
+        CHECKPOINT_DIR = args.checkpoint_dir
+        TIMESTAMP = os.path.basename(CHECKPOINT_DIR).replace("checkpoints_", "")
+        print(f"Using checkpoint directory: {CHECKPOINT_DIR}")
+    else:
+        TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+        CHECKPOINT_DIR = os.path.join("GGIP", f"checkpoints_{TIMESTAMP}")
+        print(f"Starting new training with timestamp: {TIMESTAMP}")
+
+    # 设置日志目录
+    LOG_RUN_DIR = os.path.join(LOG_DIR, TIMESTAMP)
+
+    # 验证检查点目录是否存在（仅对续训情况）
+    if not os.path.exists(CHECKPOINT_DIR) and (args.resume or args.checkpoint_dir):
+        print(f"Error: Checkpoint directory {CHECKPOINT_DIR} does not exist!")
+        sys.exit(1)
+
+    print(f"Global paths set:")
+    print(f"  - TIMESTAMP: {TIMESTAMP}")
+    print(f"  - CHECKPOINT_DIR: {CHECKPOINT_DIR}")
+    print(f"  - LOG_RUN_DIR: {LOG_RUN_DIR}")
 
 def clear_memory():
     """清理GPU和CPU内存"""
@@ -138,17 +277,154 @@ class EarlyStopping:
         self.best_epoch = epoch
 
 
-def create_directories():
-    """创建必要的目录。"""
-    dirs = [
-        os.path.join(CHECKPOINT_DIR, "ggip1"),
-        os.path.join(CHECKPOINT_DIR, "ggip2"),
-        os.path.join(CHECKPOINT_DIR, "ggip3"),
-        LOG_DIR
-    ]
-    for dir_path in dirs:
-        os.makedirs(dir_path, exist_ok=True)
-    print("Directories created or already exist.")
+def load_data_unified_split(train_percent=0.8, val_percent=0.2, seed=None):
+    """
+    统一加载所有数据集，然后随机划分为训练集和验证集
+    这样可以确保训练集和验证集来自相同的数据分布
+
+    参数:
+        train_percent: 训练集比例
+        val_percent: 验证集比例
+        seed: 随机种子，用于确保可重现的划分
+    """
+    print("Loading unified dataset with consistent split method...")
+
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+    try:
+        all_data_folders = TRAIN_DATA_FOLDERS + VAL_DATA_FOLDERS
+        print(f"Combining datasets from {len(all_data_folders)} folders:")
+        for folder in all_data_folders:
+            print(f"  - {folder}")
+
+        unified_dataset = ImuDataset(all_data_folders)
+        total_size = len(unified_dataset)
+        print(f"Total unified dataset size: {total_size} samples")
+
+        train_size = int(total_size * train_percent)
+        val_size = total_size - train_size  # 剩余的都给验证集
+
+        print(f"Dataset split:")
+        print(f"  - Training: {train_size} samples ({train_size / total_size * 100:.1f}%)")
+        print(f"  - Validation: {val_size} samples ({val_size / total_size * 100:.1f}%)")
+
+        from torch.utils.data import random_split
+
+        train_dataset, val_dataset = random_split(
+            unified_dataset,
+            [train_size, val_size],
+            generator=torch.Generator().manual_seed(seed) if seed else None
+        )
+
+    except Exception as e:
+        print(f"Error loading unified dataset: {e}")
+        sys.exit(1)
+
+    num_workers = 0 if sys.platform == "win32" else 4
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=num_workers
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE_VAL,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=num_workers
+    )
+
+    print(f"Data loaders created successfully!")
+    print(f"  - Training batches: {len(train_loader)}")
+    print(f"  - Validation batches: {len(val_loader)}")
+
+    return train_loader, val_loader
+
+
+def check_data_distribution(train_loader, val_loader, num_samples=5):
+    """
+    检查训练集和验证集的数据分布一致性
+
+    参数:
+        train_loader: 训练数据加载器
+        val_loader: 验证数据加载器
+        num_samples: 用于统计的样本批次数
+    """
+    print("\n=== Data Distribution Analysis ===")
+
+    def compute_stats(data_loader, name, max_batches=num_samples):
+        """计算数据集的基本统计信息"""
+        stats = {
+            'acc_mean': [],
+            'acc_std': [],
+            'ori_mean': [],
+            'ori_std': [],
+            'pos_mean': [],
+            'pos_std': []
+        }
+
+        count = 0
+        with torch.no_grad():
+            for data in data_loader:
+                if count >= max_batches:
+                    break
+
+                acc = data[0].float()
+                ori = data[2].float()
+                pos = data[3].float()
+
+                stats['acc_mean'].append(acc.mean().item())
+                stats['acc_std'].append(acc.std().item())
+                stats['ori_mean'].append(ori.mean().item())
+                stats['ori_std'].append(ori.std().item())
+                stats['pos_mean'].append(pos.mean().item())
+                stats['pos_std'].append(pos.std().item())
+
+                count += 1
+
+        # 计算平均值
+        for key in stats:
+            stats[key] = np.mean(stats[key])
+
+        return stats
+
+    # 计算训练集和验证集统计
+    print("Computing training set statistics...")
+    train_stats = compute_stats(train_loader, "Train")
+
+    print("Computing validation set statistics...")
+    val_stats = compute_stats(val_loader, "Validation")
+
+    # 打印对比结果
+    print(f"\nDistribution Comparison (based on {num_samples} batches):")
+    print(f"{'Metric':<15} {'Train':<12} {'Validation':<12} {'Difference':<12}")
+    print("-" * 55)
+
+    for key in train_stats:
+        train_val = train_stats[key]
+        val_val = val_stats[key]
+        diff = abs(train_val - val_val)
+        print(f"{key:<15} {train_val:<12.6f} {val_val:<12.6f} {diff:<12.6f}")
+
+    # 计算总体相似度得分
+    total_diff = sum([abs(train_stats[key] - val_stats[key]) for key in train_stats])
+    print(f"\nTotal Difference Score: {total_diff:.6f} (lower is better)")
+
+    if total_diff < 0.1:
+        print("✓ Data distributions appear consistent!")
+    elif total_diff < 0.5:
+        print("⚠ Data distributions have minor differences")
+    else:
+        print("❌ Data distributions have significant differences")
+
+    return train_stats, val_stats
+
 
 def load_data_separate():
     """
@@ -237,7 +513,7 @@ def train_fdip_1(model, optimizer, scheduler, train_loader, val_loader, epochs, 
     criterion = nn.MSELoss()
     scaler = GradScaler()
     # 创建SummaryWriter实例
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip1')) if LOG_ENABLED else None
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip1')) if LOG_ENABLED else None
 
     # 从 start_epoch 开始循环，end_epoch 为 epochs - 1
     for epoch in range(start_epoch, epochs):
@@ -337,7 +613,7 @@ def train_fdip_2(model1, model2, optimizer, scheduler, train_loader, val_loader,
     print("\n====================== Starting FDIP_2 Training (Online Inference) =========================")
     criterion = nn.MSELoss()
     scaler = GradScaler()
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip2')) if LOG_ENABLED else None
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip2')) if LOG_ENABLED else None
 
     for epoch in range(start_epoch, epochs):
         current_epoch = epoch + 1
@@ -462,7 +738,7 @@ def train_fdip_3(model1, model2, model3, optimizer, scheduler, train_loader, val
     print("\n======================== Starting FDIP_3 Training (Online Inference)====================")
     criterion = nn.MSELoss()
     scaler = GradScaler()
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip3')) if LOG_ENABLED else None
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip3')) if LOG_ENABLED else None
 
     for epoch in range(start_epoch, epochs):
         current_epoch = epoch + 1
@@ -493,8 +769,15 @@ def train_fdip_3(model1, model2, model3, optimizer, scheduler, train_loader, val
             optimizer.zero_grad(set_to_none=True)
             with autocast():
                 # FDIP_3 的输入是原始IMU数据和FDIP_2预测的所有关节位置
-                logits = model3(input_base, p_all_pos_flattened)
-                loss = torch.sqrt(criterion(logits, target))
+                pose_pred_flat = model3(input_base, p_all_pos_flattened)
+
+                # 重塑为便于计算损失的格式
+                batch_size, seq_len = pose_pred_flat.shape[:2]
+                pose_pred = pose_pred_flat.view(batch_size, seq_len, 24, 6)
+                pose_gt = pose_6d_gt.view(batch_size, seq_len, 24, 6)
+
+                # 使用改进的损失函数
+                loss = rotation_matrix_loss(pose_pred, pose_gt)
 
             if torch.isnan(loss) or torch.isinf(loss):
                 print(f"Warning: NaN/Inf loss encountered at FDIP_3 Epoch {current_epoch}, skipping batch.")
@@ -590,8 +873,7 @@ def evaluate_pipeline(model1, model2, model3, data_loader):
     # 🔥 评估前清理内存
     clear_memory()
 
-    # 修改保存路径为 GGIP/evaluate_pipeline
-    eval_results_dir = os.path.join("GGIP", "evaluate_pipeline")
+    eval_results_dir = os.path.join("GGIP", f"evaluate_pipeline_{TIMESTAMP}")
     eval_plots_dir = os.path.join(eval_results_dir, "plots")
     eval_data_dir = os.path.join(eval_results_dir, "data")
 
@@ -836,14 +1118,62 @@ def evaluate_pipeline(model1, model2, model3, data_loader):
     print(f"\nEvaluation completed. Results saved in: {eval_results_dir}")
 
 
+def rotation_matrix_loss(pred_6d, target_6d):
+    """
+    将6D表示转换为旋转矩阵后计算Frobenius范数损失
+
+    参数:
+        pred_6d: 预测的6D旋转表示，形状为[B, S, J, 6]
+        target_6d: 目标6D旋转表示，形状为[B, S, J, 6]
+    返回:
+        旋转矩阵空间中的损失
+    """
+    # 展平以便批量处理
+    batch_size, seq_len, joints, _ = pred_6d.shape
+    pred_6d_flat = pred_6d.reshape(-1, 6)
+    target_6d_flat = target_6d.reshape(-1, 6)
+
+    # 使用您提供的函数转换为旋转矩阵
+    pred_rotmat = r6d_to_rotation_matrix(pred_6d_flat)  # 输出形状 [B*S*J, 3, 3]
+    target_rotmat = r6d_to_rotation_matrix(target_6d_flat)
+
+    # 计算Frobenius范数 (矩阵元素间的欧几里德距离)
+    loss = torch.mean(torch.norm(pred_rotmat - target_rotmat, dim=(-2, -1)))
+
+    return loss
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='FDIP Training')
+    parser.add_argument('--resume', type=str, default=None,
+                       help='Resume training from checkpoint directory (e.g., 20250804_143022)')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                       help='Specific checkpoint directory path')
+    return parser.parse_args()
+# python train.py --resume 20250804_143022
+# python train.py --checkpoint_dir GGIP/checkpoints_20250804_143022
+
+
 def main():
     """主函数，运行完整的训练和评估流程，并支持从断点恢复。"""
     set_seed(SEED)
     print("==================== Starting Full Training Pipeline =====================")
+
+    args = parse_args()
+    setup_directories_and_paths(args)
     create_directories()
     try:
-        train_loader, val_loader = load_data_separate()
+        # train_loader, val_loader = load_data_separate()
+        train_loader, val_loader = load_data_unified_split(
+            train_percent=0.8,
+            val_percent=0.2,
+            seed=SEED
+        )
         print("✓ Using separate train/validation datasets - No data leakage risk!")
+
+        print("✓ Using unified dataset with consistent split!")
+        # 检查数据分布一致性
+        check_data_distribution(train_loader, val_loader)
+
     except Exception as e:
         print(f"❌ Failed to load separate datasets: {e}")
         print("⚠️  Falling back to legacy split method (may have data leakage risk)")
@@ -851,6 +1181,7 @@ def main():
 
     patience = PATIENCE
     max_epochs = MAX_EPOCHS
+
     total_start_time = time.time()
 
     # --- 阶段 1: FDIP_1 ---

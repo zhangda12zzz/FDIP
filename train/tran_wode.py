@@ -4,54 +4,271 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import autocast, GradScaler
-from torch.utils.data import DataLoader, random_split, Subset
-from torch.utils.tensorboard import SummaryWriter
-
-# import config as conf
+import numpy as np
+import random
+import seaborn as sns  # 基于matplotlib的高级可视化库，用于创建统计图表
+import matplotlib.pyplot as plt  # 绘图库
+from torch.cuda.amp import autocast, GradScaler  # float16
+from torch.utils.data import DataLoader, Subset
+from torch.utils.tensorboard import SummaryWriter  # 训练指标写入TensorBoard日志
+from tqdm import tqdm
+import json
+import pickle  # 序列化
+import pandas as pd  # 表格数据分析
+from datetime import datetime
 from data.dataset_posReg import ImuDataset
 from model.net_zd import FDIP_1, FDIP_2, FDIP_3
-print(f"Using device")
-from evaluator import PoseEvaluator
+from evaluator import PoseEvaluator, PerFramePoseEvaluator  # 整体、逐帧姿态评估
+import gc
+import logging
 
-# Configuration
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'  # Set GPU device
-
-# Hyperparameters
+# --- Configuration ---
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'  # 设置使用的GPU
 LEARNING_RATE = 1e-4
-CHECKPOINT_INTERVAL = 50
+WEIGHT_DECAY = 1e-5  # 正则化参数，控制权重衰减
 BATCH_SIZE = 64
-BATCH_SIZE_VAL = 16
-DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 LOG_ENABLED = True
 TRAIN_PERCENT = 0.9
+BATCH_SIZE_VAL = 32
+SEED = 42
 
-# Paths (centralized for easier management)
+PATIENCE = 10
+MAX_EPOCHS = 150  # 设置一个较高的上限，由早停来决定最佳轮数
+DELTA = 0
+
+# --- Paths ---
+# 请确保这些路径在您的环境中是正确的
 TRAIN_DATA_FOLDERS = [
-    os.path.join("D:\\", "Dataset", "AMASS", "HumanEva", "pt"),
-    os.path.join("D:\\", "Dataset", "DIPIMUandOthers", "DIP_6", "Detail")
+    os.path.join("D:\\", "Dataset", "TotalCapture_Real_60FPS", "KaPt", "split_actions"),
+    os.path.join("D:\\", "Dataset", "DIPIMUandOthers", "DIP_6", "Detail"),
+    os.path.join("D:\\", "Dataset", "AMASS", "DanceDB", "pt")
 ]
-CHECKPOINT_DIR = os.path.join("GGIP", "checkpoints")
-LOG_DIR = "log"
+VAL_DATA_FOLDERS = [
+    os.path.join("D:\\", "Dataset", "AMASS", "HumanEva", "pt"),
+]
 
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+CHECKPOINT_DIR = os.path.join("GGIP", f"checkpoints_{TIMESTAMP}")
+LOG_DIR = "log"
+LOG_RUN_DIR = os.path.join(LOG_DIR, TIMESTAMP)
+
+
+class TeeOutput:
+    """将输出同时写入控制台和文件"""
+
+    def __init__(self, file_path, mode='w'):
+        self.terminal = sys.stdout
+        self.log_file = open(file_path, mode, encoding='utf-8')
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()  # 确保实时写入
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+    def close(self):
+        if hasattr(self, 'log_file') and not self.log_file.closed:
+            self.log_file.close()
+
+
+def setup_logging():
+    """设置日志系统，将所有输出重定向到文件和控制台"""
+    global log_file_path, tee_output
+
+    # 创建日志目录
+    os.makedirs(LOG_RUN_DIR, exist_ok=True)
+
+    # 创建日志文件路径
+    log_file_path = os.path.join(LOG_RUN_DIR, f"training_log_{TIMESTAMP}.log")
+
+    # 设置输出重定向
+    tee_output = TeeOutput(log_file_path)
+    sys.stdout = tee_output
+
+    # 记录日志开始信息
+    print("=" * 80)
+    print(f"Training Log Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Log file: {log_file_path}")
+    print("=" * 80)
+
+
+def close_logging():
+    """关闭日志系统，恢复标准输出"""
+    global tee_output
+    if 'tee_output' in globals():
+        print("=" * 80)
+        print(f"Training Log Ended at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("=" * 80)
+
+        # 恢复标准输出
+        sys.stdout = tee_output.terminal
+        tee_output.close()
 
 
 def create_directories():
-    """Create necessary directories for checkpoints and logs"""
+    """创建必要的目录，log内部带时间戳子文件夹。"""
     dirs = [
         os.path.join(CHECKPOINT_DIR, "ggip1"),
         os.path.join(CHECKPOINT_DIR, "ggip2"),
         os.path.join(CHECKPOINT_DIR, "ggip3"),
-        LOG_DIR
+        LOG_DIR,
+        LOG_RUN_DIR,
     ]
     for dir_path in dirs:
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-            print(f"Created directory: {dir_path}")
+        os.makedirs(dir_path, exist_ok=True)
+    print(f"Directories created with timestamp {TIMESTAMP}:")
+    for dir_path in dirs:
+        print(f"  - {dir_path}")
 
-def load_data(train_percent=TRAIN_PERCENT):
-    """Load and split dataset into training and validation sets"""
-    print("Loading dataset...")
+
+def set_seed(seed):
+    """设置随机种子以确保可复现性"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # 适用于多GPU
+        # 确保CUDA卷积操作的确定性
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False  # True可能加速但引入不确定性
+    print(f"Random seed set to {seed}")
+
+
+def clear_memory():
+    """清理GPU和CPU内存"""
+    torch.cuda.empty_cache()
+    gc.collect()
+    print(f"GPU memory after cleanup: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB")
+
+
+def cleanup_training_objects(*objects):
+    """清理训练相关对象"""
+    for obj in objects:
+        if obj is not None:
+            del obj
+    clear_memory()
+
+
+class EarlyStopping:
+    """
+    如果验证损失在给定的耐心期后没有改善，则提前停止训练（仍会进行下一阶段训练）。
+    MODIFIED: 现在可以保存和加载优化器状态和轮数。
+    """
+
+    def __init__(self, patience=10, verbose=True, delta=0, path='checkpoint.pt'):
+        self.patience = patience  # 允许验证损失不改善的轮数上限
+        self.verbose = verbose  # 控制是否打印详细信息
+        self.counter = 0  # 用于记录连续没有改善的轮数
+        self.best_score = None  # 记录最佳分数（-val_loss）【最佳=最大】
+        self.early_stop = False
+        self.val_loss_min = np.Inf  # 记录最低验证损失
+        self.delta = delta  # 定义"显著改善"的最小阈值
+        self.path = path
+        self.best_epoch = 0  # 记录达到最低验证损失的轮数
+
+    def __call__(self, val_loss, model, optimizer, epoch):
+
+        if not np.isfinite(val_loss):
+            if self.verbose:
+                print(f"Warning: Validation loss is {val_loss} at epoch {epoch}, skipping EarlyStopping.")
+            return
+
+        score = -val_loss  # 将损失转换为分数，越大越好
+        if self.best_score is None:  # 第一次调用
+            self.best_score = score
+            self.save_checkpoint(val_loss, model, optimizer, epoch)
+        elif score < self.best_score + self.delta:  # 分数没有改善
+            self.counter += 1
+            if self.verbose:  # 打印信息
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            if self.counter >= self.patience:  # 达到耐心上限
+                self.early_stop = True
+        else:  # 分数有所改善
+            self.best_score = score
+            self.save_checkpoint(val_loss, model, optimizer, epoch)
+            self.counter = 0  # 重置计数器
+
+    def save_checkpoint(self, val_loss, model, optimizer, epoch):
+        """当验证损失减少时保存模型、优化器和轮数。"""
+        if self.verbose:
+            print(
+                f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}). Saving checkpoint to {self.path}...')
+
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+
+        checkpoint = {
+            'epoch': epoch,  # 当前轮数
+            'model_state_dict': model.state_dict(),  # 模型参数
+            'optimizer_state_dict': optimizer.state_dict(),  # 优化器状态
+            'val_loss_min': val_loss,  # 当前最佳验证损失
+            'best_score': self.best_score,  # 当前最佳分数
+            'early_stopping_counter': self.counter  # 早停计数器状态
+        }
+        torch.save(checkpoint, self.path)
+        self.val_loss_min = val_loss
+        self.best_epoch = epoch
+
+
+def load_data_separate():
+    """
+    分别加载训练集和验证集，避免数据泄漏
+    """
+    print("Loading separate train and validation datasets...")
+
+    try:
+        # 加载训练数据集
+        print("Loading training dataset...")
+        train_dataset = ImuDataset(TRAIN_DATA_FOLDERS)
+        print(f"Training dataset loaded: {len(train_dataset)} samples")
+
+        # 加载验证数据集
+        print("Loading validation dataset...")
+        val_dataset = ImuDataset(VAL_DATA_FOLDERS)
+        print(f"Validation dataset loaded: {len(val_dataset)} samples")
+
+    except Exception as e:
+        print(f"Error loading datasets: {e}")
+        print("Please ensure your dataset paths and ImuDataset class are correct.")
+        sys.exit(1)
+
+    # 数据加载器设置
+    num_workers = 0 if sys.platform == "win32" else 4
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=num_workers
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE_VAL,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=num_workers
+    )
+
+    print(f"Data loaders created successfully!")
+    print(f"  - Training batches: {len(train_loader)}")
+    print(f"  - Validation batches: {len(val_loader)}")
+
+    return train_loader, val_loader
+
+
+def load_data_legacy(train_percent=0.9):
+    """
+    原始的数据加载方式（作为备选方案）
+    从同一数据集中按比例划分训练和验证集
+    """
+    print("Loading dataset with legacy split method...")
     try:
         custom_dataset = ImuDataset(TRAIN_DATA_FOLDERS)
     except Exception as e:
@@ -60,677 +277,858 @@ def load_data(train_percent=TRAIN_PERCENT):
 
     total_size = len(custom_dataset)
     train_size = int(total_size * train_percent)
+    train_indices = list(range(train_size))
+    val_indices = list(range(train_size, total_size))
 
-    # train_dataset, val_dataset = random_split(custom_dataset, [train_size, val_size])
-    train_dataset = Subset(custom_dataset, range(train_size))
-    # val_dataset 包含数据集从 train_size 索引开始到末尾的样本
-    val_dataset = Subset(custom_dataset, range(train_size, total_size))
+    train_dataset = Subset(custom_dataset, train_indices)
+    val_dataset = Subset(custom_dataset, val_indices)
 
-    # Use pin_memory=True for GPU to optimize memory transfer
+    num_workers = 0 if sys.platform == "win32" else 4
+
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        pin_memory=False if torch.cuda.is_available() else False
+        train_dataset, batch_size=BATCH_SIZE, shuffle=True,
+        pin_memory=True, num_workers=num_workers
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=16,
-        shuffle=False,
-        pin_memory=False if torch.cuda.is_available() else False
+        val_dataset, batch_size=BATCH_SIZE_VAL, shuffle=False,
+        pin_memory=True, num_workers=num_workers
     )
-
-    print(f"Dataset loaded: {len(train_dataset)} training samples, {len(val_dataset)} validation samples")
-    print(f"Number of batches in train_loader: {len(train_loader)}\n")
-
+    print(f"Legacy dataset loaded: {len(train_dataset)} training samples, {len(val_dataset)} validation samples")
     return train_loader, val_loader
 
-def load_checkpoint(model, optimizer, checkpoint_path):
-    """Load model and optimizer state from checkpoint"""
-    if not os.path.exists(checkpoint_path):
-        print(f"No checkpoint found at {checkpoint_path}")
-        return 0
 
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
-        print(f"Loaded checkpoint from epoch {epoch}")
-        return epoch + 1
-    except Exception as e:
-        print(f"Error loading checkpoint: {e}")
-        return 0
-
-def save_checkpoint(model, optimizer, epoch, checkpoint_path):
-    """Save model and optimizer state to checkpoint"""
-    try:
-        checkpoint = {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "epoch": epoch
-        }
-        torch.save(checkpoint, checkpoint_path)
-        print(f"Checkpoint saved to {checkpoint_path}")
-    except Exception as e:
-        print(f"Error saving checkpoint: {e}")
-
-def train_fdip_1(train_loader, val_loader, pretrained_epoch=0, epochs=1):
-    """Train the FDIP_1 model for leaf joint position estimation"""
-    print("\n===== Starting FDIP_1 Training =====")
-
-    # Initialize model, loss function, optimizer
-    model = FDIP_1(6 * 9,  5 * 3).to(DEVICE)
+def train_fdip_1(model, optimizer, scheduler, train_loader, val_loader, epochs, early_stopper, start_epoch=0):
+    """训练 FDIP_1 模型，支持从指定轮数开始训练"""
+    print("\n=============================== Starting FDIP_1 Training =============================")
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(0.9, 0.999))
-
-    # 添加FP16所需的GradScaler
     scaler = GradScaler()
+    # 创建SummaryWriter实例
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip1')) if LOG_ENABLED else None
 
-    # TensorBoard writer
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip1')) if LOG_ENABLED else None
+    # 从 start_epoch 开始循环，end_epoch 为 epochs - 1
+    for epoch in range(start_epoch, epochs):
+        current_epoch = epoch + 1  # 用于日志显示，从1开始
+        model.train()
+        train_losses = []
+        epoch_pbar = tqdm(train_loader, desc=f"FDIP_1 Epoch {current_epoch}/{epochs}", leave=True)
+        # 每个批次 out_acc, out_ori, out_rot_6d, out_leaf_pos, out_all_pos,  out_pose, out_pose_6d, out_shape
+        for data in epoch_pbar:
+            acc = data[0].to(DEVICE, non_blocking=True).float()
+            ori_6d = data[2].to(DEVICE, non_blocking=True).float()
+            p_leaf = data[3].to(DEVICE, non_blocking=True).float()
 
-    # Optional: Load pretrained model (commented out by default)
-    # pretrain_path = os.path.join(CHECKPOINT_DIR, 'ggip1', 'epoch_190.pkl')
-    # pretrained_epoch = load_checkpoint(model, optimizer, pretrain_path)
+            x = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
+            target = p_leaf.view(-1, p_leaf.shape[1], 15)  # 5个叶节点，每个3D位置
 
-    # Training loop
-    for epoch in range(epochs):
-        try:
-            current_epoch = epoch + pretrained_epoch + 1
-            print(f'\n===== FDIP_1 Training Epoch: {current_epoch} =====')
+            optimizer.zero_grad(set_to_none=True)
+            with autocast():
+                logits = model(x)
+                loss = torch.sqrt(criterion(logits, target))  # 使用RMSE
 
-            # Training phase
-            model.train()
-            train_losses = []
-            epoch_step = 1
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: NaN/Inf loss encountered at FDIP_1 Epoch {current_epoch}, skipping batch.")
+                continue
 
-            #批分
-            for batch_idx, data in enumerate(train_loader):
-                try:
-                    # Extract batch data
-                    acc = data[0].to(DEVICE).float()
-                    ori_6d = data[2].to(DEVICE).float()
-                    p_leaf = data[3].to(DEVICE).float()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            train_losses.append(loss.item())
+            epoch_pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-                    # Prepare input and target
-                    x = torch.cat((acc, ori_6d), -1)
-                    model_input = x.view(x.shape[0], x.shape[1], -1)
-                    target = p_leaf.view(-1, p_leaf.shape[1], 15)
-
-                    optimizer.zero_grad()
-                    with autocast():
-                        # Forward pass
-                        logits = model(model_input)
-                        # Compute loss and update
-                        loss = torch.sqrt(criterion(logits, target))
-
-                    # Check for NaN or Inf loss
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        print(f"Warning: NaN or Inf loss detected at batch {batch_idx}")
-                        continue
-
-
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                    # Log training progress
-                    train_losses.append(loss.item())
-                    if LOG_ENABLED:
-                        writer.add_scalar('mse_step/train', loss, epoch_step)
-
-                    # Print progress
-                    log_interval = len(train_loader) // 10
-                    if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == len(train_loader):
-                        print(f'Train Epoch: {current_epoch} [{min((batch_idx + 1) * BATCH_SIZE, len(train_loader.dataset))}/{len(train_loader.dataset)}]\tLoss: {loss:.6f}')
-
-                    epoch_step += 1
-                except Exception as e:
-                    print(f"Error during training batch {batch_idx}: {e}")
-                    continue
-        except RuntimeError as e:
-            if 'out of memory' in str(e):
-                print("Out of memory error caught, clearing GPU cache")
-                torch.cuda.empty_cache()
-                # 如果想要在OOM发生时重新尝试当前epoch的处理，可以加一个重试机制
-                continue  # 继续下一轮epoch
-            else:
-                raise e  # 如果是其他错误，重新抛出
-
-        # Calculate average training loss
-        if train_losses:
-            avg_train_loss = sum(train_losses) / len(train_losses)
-            print(f'Average Training Loss: {avg_train_loss:.6f}')
-            if LOG_ENABLED:
-                writer.add_scalar('mse/train', avg_train_loss, current_epoch)
-
-        # Validation phase
+        # 验证阶段
         model.eval()
         val_losses = []
-
         with torch.no_grad():
             for data_val in val_loader:
-                try:
-                    acc_val = data_val[0].to(DEVICE).float()
-                    ori_val = data_val[2].to(DEVICE).float()
-                    p_leaf_val = data_val[3].to(DEVICE).float()
+                acc_val = data_val[0].to(DEVICE, non_blocking=True).float()
+                ori_val = data_val[2].to(DEVICE, non_blocking=True).float()
+                p_leaf_val = data_val[3].to(DEVICE, non_blocking=True).float()
 
-                    x_val = torch.cat((acc_val, ori_val), -1)
-                    input_val = x_val.view(x_val.shape[0], x_val.shape[1], -1)
-                    target_val = p_leaf_val.view(-1, p_leaf_val.shape[1], 15)
+                x_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+                target_val = p_leaf_val.view(-1, p_leaf_val.shape[1], 15)
+                logits_val = model(x_val)
+                loss_val = torch.sqrt(criterion(logits_val, target_val))
 
-                    logits_val = model(input_val)
-                    loss_val = torch.sqrt(criterion(logits_val, target_val))
-                    val_losses.append(loss_val.item())
-                except Exception as e:
-                    print(f"Error during validation: {e}")
+                if torch.isnan(loss_val) or torch.isinf(loss_val):
+                    print(
+                        f"Warning: NaN/Inf loss encountered at FDIP_1 Epoch {current_epoch}, skipping validation batch.")
                     continue
 
-            if val_losses:
-                avg_val_loss = sum(val_losses) / len(val_losses)
-                print(f'FDIP_1 Val: Average Validation Loss: {avg_val_loss:.6f}\n')
-                if LOG_ENABLED:
-                    writer.add_scalar('mse/val', avg_val_loss, current_epoch)
+                val_losses.append(loss_val.item())
 
-        # Save checkpoint
-        if current_epoch % CHECKPOINT_INTERVAL == 0:
-            checkpoint_path = os.path.join(CHECKPOINT_DIR, 'ggip1', f'epoch_{current_epoch}.pkl')
-            save_checkpoint(model, optimizer, current_epoch, checkpoint_path)
+        avg_train_loss = np.mean(train_losses) if train_losses else 0.0  # 处理空列表情况
+        avg_val_loss = np.mean(val_losses) if val_losses else 0.0  # 处理空列表情况
+        current_lr = optimizer.param_groups[0]['lr']
+        print(
+            f'FDIP_1 Epoch {current_epoch}/{epochs} | Avg Train Loss: {avg_train_loss:.6f} | Avg Val Loss: {avg_val_loss:.6f} | LR: {current_lr:.6f}')
 
-        # Clear GPU memory cache
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
-
-    # Generate predictions
-    print("Generating predictions for training and validation data...")
-    train_predictions = predict_fdip_1(model, train_loader)
-    val_predictions = predict_fdip_1(model, val_loader)
-
-    if LOG_ENABLED and writer:
-        writer.close()
-
-    return model, train_predictions, val_predictions
-
-def predict_fdip_1(model, data_loader):
-    """Generate predictions using the trained AGGRU_1 model"""
-    model.eval()
-    all_predictions = []
-
-    with torch.no_grad():
-        for data in data_loader:
-            try:
-                acc = data[0].to(DEVICE).float()
-                ori_6d = data[2].to(DEVICE).float()
-
-                x = torch.cat((acc, ori_6d), -1)
-                model_input = x.view(x.shape[0], x.shape[1], -1)
-                logits = model(model_input)
-
-                zeros = torch.zeros(logits.shape[:-1] + (3,), device=DEVICE)
-                logits_extended = torch.cat([zeros, logits], dim=-1)
-                logits_extended = logits_extended.view(*logits.shape[:-1], 6, 3)
-                all_predictions.append(logits_extended)
-            except Exception as e:
-                print(f"Error during prediction: {e}")
-                continue
-
-    if all_predictions:
-        all_predictions = torch.cat(all_predictions, dim=0)
-        print(f"Predictions shape: {all_predictions.shape}")
-    else:
-        print("No predictions generated.")
-        all_predictions = None
-
-    return all_predictions
-
-def train_fdip_2(train_loader, val_loader, train_predictions, val_predictions, pretrained_epoch=0, epochs=1):
-    """Train the FDIP_2 model for all joint position estimation"""
-    print("\n===== Starting FDIP_2 Training =====")
-
-    # Initialize model, loss function, optimizer
-    model = FDIP_2(6 * 12,  24 * 3).to(DEVICE)
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(0.9, 0.999))
-
-    scaler = GradScaler()
-    # TensorBoard writer
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip2')) if LOG_ENABLED else None
-
-    # Training loop
-    for epoch in range(epochs):
-        try:
-            current_epoch = epoch + pretrained_epoch + 1
-            print(f'\n===== FDIP_2 Training Epoch: {current_epoch} =====')
-
-            # Training phase
-            model.train()
-            train_losses = []
-            epoch_step = 1
-
-            for batch_idx, data in enumerate(train_loader):
-                try:
-                    acc = data[0].to(DEVICE).float()
-                    ori_6d = data[2].to(DEVICE).float()
-                    p_all = data[4].to(DEVICE).float()
-
-                    batch_start = batch_idx * BATCH_SIZE
-                    batch_end = min((batch_idx + 1) * BATCH_SIZE, len(train_predictions))
-                    p_leaf_pred = train_predictions[batch_start:batch_end]
-
-                    x = torch.cat((acc, ori_6d, p_leaf_pred), -1)
-                    model_input = x.view(x.shape[0], x.shape[1], -1)
-
-                    zeros = torch.zeros(p_all.shape[:-1] + (3,), device=DEVICE)
-                    target = torch.cat([zeros, p_all], dim=-1)
-                    target = target.view(-1, target.shape[1], 72)
-
-                    optimizer.zero_grad()
-                    with autocast():
-                        logits = model(model_input)
-                        loss = torch.sqrt(criterion(logits, target))
-
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        print(f"Warning: NaN or Inf loss detected at batch {batch_idx}")
-                        continue
-
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                    train_losses.append(loss.item())
-                    if LOG_ENABLED:
-                        writer.add_scalar('mse_step/train', loss, epoch_step)
-
-                    log_interval = len(train_loader) // 10
-                    if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == len(train_loader):
-                        print(f'Train Epoch: {current_epoch} [{min((batch_idx + 1) * BATCH_SIZE, len(train_loader.dataset))}/{len(train_loader.dataset)}]\tLoss: {loss:.6f}')
-
-                    epoch_step += 1
-                except Exception as e:
-                    print(f"Error during training batch {batch_idx}: {e}")
-                    continue
-        except RuntimeError as e:
-            if 'out of memory' in str(e):
-                print("Out of memory error caught, clearing GPU cache")
-                torch.cuda.empty_cache()
-                # 如果想要在OOM发生时重新尝试当前epoch的处理，可以加一个重试机制
-                continue  # 继续下一轮epoch
-            else:
-                raise e  # 如果是其他错误，重新抛出
-
-
-        if train_losses:
-            avg_train_loss = sum(train_losses) / len(train_losses)
-            print(f'FDIP_2: Average Training Loss: {avg_train_loss:.6f}')
-            if LOG_ENABLED:
-                writer.add_scalar('mse/train', avg_train_loss, current_epoch)
-
-        # Validation phase
-        model.eval()
-        val_losses = []
-
-        with torch.no_grad():
-            for batch_idx_val, data_val in enumerate(val_loader):
-                try:
-                    acc_val = data_val[0].to(DEVICE).float()
-                    ori_val = data_val[2].to(DEVICE).float()
-                    p_all_val = data_val[4].to(DEVICE).float()
-
-                    loader_batch_size_val = val_loader.batch_size
-                    batch_start = batch_idx_val * loader_batch_size_val
-                    current_actual_batch_size = acc_val.shape[0]  # 获取当前批次的真实大小
-                    batch_end = batch_start + current_actual_batch_size
-                    p_leaf_pred_val = val_predictions[batch_start:batch_end]
-
-                    x_val = torch.cat((acc_val, ori_val, p_leaf_pred_val), -1)
-                    input_val = x_val.view(x_val.shape[0], x_val.shape[1], -1)
-
-                    zeros = torch.zeros(p_all_val.shape[:-1] + (3,), device=DEVICE)
-                    target_val = torch.cat([zeros, p_all_val], dim=-1)
-                    target_val = target_val.view(-1, target_val.shape[1], 72)
-
-                    logits_val = model(input_val)
-                    loss_val = torch.sqrt(criterion(logits_val, target_val))
-                    val_losses.append(loss_val.item())
-                except Exception as e:
-                    print(f"Error during validation: {e}")
-                    continue
-
-            if val_losses:
-                avg_val_loss = sum(val_losses) / len(val_losses)
-                print(f'FDIP_2 Val: Average Validation Loss: {avg_val_loss:.6f}\n')
-                if LOG_ENABLED:
-                    writer.add_scalar('mse/val', avg_val_loss, current_epoch)
-
-        # Save checkpoint
-        if current_epoch % CHECKPOINT_INTERVAL == 0:
-            checkpoint_path = os.path.join(CHECKPOINT_DIR, 'ggip2', f'epoch_{current_epoch}.pkl')
-            save_checkpoint(model, optimizer, current_epoch, checkpoint_path)
-
-        # Clear GPU memory cache
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
-
-    # Generate predictions
-    print("Generating predictions for training and validation data...")
-    train_predictions_2 = predict_fdip_2(model, train_loader, train_predictions)
-    val_predictions_2 = predict_fdip_2(model, val_loader, val_predictions)
-
-    if LOG_ENABLED and writer:
-        writer.close()
-
-    return model, train_predictions_2, val_predictions_2
-
-def predict_fdip_2(model, data_loader, aggru1_predictions):
-    """Generate predictions using the trained FDIP_2 model"""
-    model.eval()
-    all_predictions = []
-
-    loader_batch_size = data_loader.batch_size
-
-    with (torch.no_grad()):
-        for batch_idx, data in enumerate(data_loader):
-            try:
-                acc = data[0].to(DEVICE).float()
-                ori_6d = data[2].to(DEVICE).float()
-
-                if loader_batch_size == BATCH_SIZE_VAL:
-                    batch_start = batch_idx * BATCH_SIZE_VAL
-                    current_actual_batch_size = acc.shape[0]
-                    batch_end = batch_start + current_actual_batch_size
-                else:
-                    batch_start = batch_idx * BATCH_SIZE
-                    batch_end = min((batch_idx + 1) * BATCH_SIZE, len(aggru1_predictions))
-
-                p_leaf_pred = aggru1_predictions[batch_start:batch_end]
-
-                # 检查切片后的批次大小是否与输入一致
-                if p_leaf_pred.shape[0] != acc.shape[0]:
-                    print("Error: Batch size mismatch after slicing!")
-                    continue
-
-                x = torch.cat((acc, ori_6d, p_leaf_pred), -1)
-                model_input = x.view(x.shape[0], x.shape[1], -1)
-                logits = model(model_input)
-                logits = logits.view(logits.shape[0], logits.shape[1], 24, 3)
-
-                # zeros = torch.zeros(logits.shape[:-1] + (3,), device=DEVICE)
-                # logits_extended = torch.cat([logits, zeros], dim=-1)
-                # logits_extended = logits_extended.view(*logits.shape[:-1], 24, 3)
-                all_predictions.append(logits)
-            except Exception as e:
-                print(f"Error during prediction: {e}")
-                continue
-
-    if all_predictions:
-        all_predictions = torch.cat(all_predictions, dim=0)
-        print(f"AGGRU_2 predictions shape: {all_predictions.shape}")
-    else:
-        print("No predictions generated.")
-        all_predictions = None
-
-    return all_predictions
-
-def train_fdip_3(train_loader, val_loader, train_predictions_2, val_predictions_2, pretrained_epoch=0, epochs=1):
-    """Train the FDIP_3 model for joint rotations in 6D representation"""
-    print("\n===== Starting FDIP_3 Training =====")
-
-    # Initialize models and evaluator
-    model = FDIP_3(24 * 12,  24 * 6).to(DEVICE)
-    #evaluator = PoseEvaluator()
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(0.9, 0.999))
-
-    scaler = GradScaler()
-    # TensorBoard writer
-    writer = SummaryWriter(os.path.join(LOG_DIR, 'ggip3')) if LOG_ENABLED else None
-
-    # Training loop
-    for epoch in range(epochs):
-        try:
-            current_epoch = epoch + pretrained_epoch + 1
-            print(f'\n===== FDIP_3 Training Epoch: {current_epoch} =====')
-
-            # Training phase
-            model.train()
-            train_losses = []
-            epoch_step = 1
-
-            for batch_idx, data in enumerate(train_loader):
-                try:
-                    acc = data[0].to(DEVICE).float()
-                    ori_6d = data[2].to(DEVICE).float()
-                    pose_6d = data[6].to(DEVICE).float()
-
-                    batch_start = batch_idx * BATCH_SIZE
-                    batch_end = min((batch_idx + 1) * BATCH_SIZE, len(train_predictions_2))
-                    p_all_pos = train_predictions_2[batch_start:batch_end]
-
-                    x = torch.cat((acc, ori_6d), -1)
-                    input_base = x.view(x.shape[0], x.shape[1], -1)
-
-                    p_all_flattened = p_all_pos.view(x.shape[0], x.shape[1], -1)
-
-                    # model_input = torch.cat((input_base, p_all_flattened), -1)
-                    target = pose_6d.view(pose_6d.shape[0], pose_6d.shape[1], 144)
-
-                    optimizer.zero_grad()
-                    with autocast():
-                        logits = model(input_base, p_all_flattened)
-
-                        loss = torch.sqrt(criterion(logits, target))
-
-                    if torch.isnan(loss) or torch.isinf(loss):
-                        print(f"Warning: NaN or Inf loss detected at batch {batch_idx}")
-                        continue
-
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-
-                    train_losses.append(loss.item())
-                    if LOG_ENABLED:
-                        writer.add_scalar('mse_step/train', loss, epoch_step)
-
-                    log_interval = len(train_loader) // 10
-                    if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == len(train_loader):
-                        print(f'Train Epoch: {current_epoch} [{min((batch_idx + 1) * BATCH_SIZE, len(train_loader.dataset))}/{len(train_loader.dataset)}]\tLoss: {loss:.6f}')
-
-                    epoch_step += 1
-                except Exception as e:
-                    print(f"Error during training batch {batch_idx}: {e}")
-                    continue
-        except RuntimeError as e:
-            if 'out of memory' in str(e):
-                print("Out of memory error caught, clearing GPU cache")
-                torch.cuda.empty_cache()
-                # 如果想要在OOM发生时重新尝试当前epoch的处理，可以加一个重试机制
-                continue  # 继续下一轮epoch
-            else:
-                raise e  # 如果是其他错误，重新抛出
-
-        if train_losses:
-            avg_train_loss = sum(train_losses) / len(train_losses)
-            print(f'FDIP_3: Average Training Loss: {avg_train_loss:.6f}')
-            if LOG_ENABLED:
-                writer.add_scalar('mse/train', avg_train_loss, current_epoch)
-
-        # Validation phase
-        model.eval()
-        val_losses = []
-
-        with torch.no_grad():
-            for batch_idx_val, data_val in enumerate(val_loader):
-                try:
-                    acc_val = data_val[0].to(DEVICE).float()
-                    ori_val = data_val[2].to(DEVICE).float()
-                    pose_6d_val = data_val[6].to(DEVICE).float()
-
-                    loader_batch_size_val = val_loader.batch_size
-                    batch_start = batch_idx_val * loader_batch_size_val
-                    current_actual_batch_size = acc_val.shape[0]  # 获取当前批次的真实大小
-                    batch_end = batch_start + current_actual_batch_size
-
-                    p_all_val = val_predictions_2[batch_start:batch_end]
-
-                    x = torch.cat((acc_val, ori_val), -1)
-                    input_base_val = x.view(x.shape[0], x.shape[1], -1)
-                    p_all_flattened_val = p_all_val.view(x.shape[0], x.shape[1], -1)
-                    # input_val = torch.cat((input_base_val, p_all_flattened_val), -1)
-                    target_val = pose_6d_val.view(pose_6d_val.shape[0], pose_6d_val.shape[1], 144)
-
-                    logits_val = model(input_base_val, p_all_flattened_val)
-                    loss_val = torch.sqrt(criterion(logits_val, target_val))
-                    val_losses.append(loss_val.item())
-                except Exception as e:
-                    print(f"Error during validation: {e}")
-                    continue
-
-            if val_losses:
-                avg_val_loss = sum(val_losses) / len(val_losses)
-                print(f'AGGRU_3 Val: Average Validation Loss: {avg_val_loss:.6f}\n')
-                if LOG_ENABLED:
-                    writer.add_scalar('mse/val', avg_val_loss, current_epoch)
-
-        # **Monitor Soft Limits parameters in each epoch**
         if LOG_ENABLED and writer:
-            # 记录软约束层的最小角度和最大角度
-            writer.add_histogram(f'limits/min_angles_epoch_{current_epoch}', model.soft_limits.min_angles.data, current_epoch)
-            writer.add_histogram(f'limits/max_angles_epoch_{current_epoch}', model.soft_limits.max_angles.data, current_epoch)
+            writer.add_scalars('loss/fdip1', {'train': avg_train_loss, 'val': avg_val_loss}, current_epoch)
+            writer.add_scalar('learning_rate/fdip1', current_lr, current_epoch)
 
-            # 打印当前角度限制
-            print(f"Epoch {current_epoch} - Min angles: {model.soft_limits.min_angles.data.min().item():.4f} to {model.soft_limits.min_angles.data.max().item():.4f}")
-            print(f"Epoch {current_epoch} - Max angles: {model.soft_limits.max_angles.data.min().item():.4f} to {model.soft_limits.max_angles.data.max().item():.4f}")
+        scheduler.step()  # 学习率调度器步进
 
+        # 检查早停
+        early_stopper(avg_val_loss, model, optimizer, current_epoch)
+        if early_stopper.early_stop:
+            print(f"Early stopping triggered at epoch {current_epoch} for FDIP_1.")
+            break
 
-        # Save checkpoint
-        if current_epoch % CHECKPOINT_INTERVAL == 0:
-            checkpoint_path = os.path.join(CHECKPOINT_DIR, 'ggip3', f'epoch_{current_epoch}.pkl')
-            save_checkpoint(model, optimizer, current_epoch, checkpoint_path)
+        # 🔥 每个epoch结束后清理内存
+        torch.cuda.empty_cache()
 
-        # Clear GPU memory cache
-        # if torch.cuda.is_available():
-        #     torch.cuda.empty_cache()
+    # 训练结束后，加载最佳模型的状态
+    print(
+        f"FDIP_1 training finished. Loading best model from epoch {early_stopper.best_epoch} saved at {early_stopper.path}.")
+    if os.path.exists(early_stopper.path):
+        best_checkpoint = torch.load(early_stopper.path)
+        model.load_state_dict(best_checkpoint['model_state_dict'])
+    else:
+        print(f"Warning: Best model checkpoint not found at {early_stopper.path}. Using last epoch's model.")
 
-    if LOG_ENABLED and writer:
+    if writer:
         writer.close()
+        del writer  # 🔥 清理writer
 
+    # 🔥 清理训练过程中的临时变量
+    del criterion, scaler
+    torch.cuda.empty_cache()
+
+    print("======================== FDIP_1 Training Finished ==========================================")
     return model
 
-def evaluate_pipeline(model1, model2, model3, data_loader):
-    """Evaluate the complete pipeline on the validation dataset"""
-    print("\n===== Evaluating Complete Pipeline =====")
-    evaluator = PoseEvaluator()
 
-    # Set all models to evaluation mode
-    model1.eval()
-    model2.eval()
-    model3.eval()
-
+def train_fdip_2(model1, model2, optimizer, scheduler, train_loader, val_loader, epochs, early_stopper, start_epoch=0):
+    """训练 FDIP_2 模型，支持从指定轮数开始训练"""
+    print("\n====================== Starting FDIP_2 Training (Online Inference) =========================")
     criterion = nn.MSELoss()
-    val_losses = []
-    all_sip_errs = []
-    all_ang_errs = []
-    all_pos_errs = []
-    all_mesh_errs = []
-    all_jerk_errs = []
+    scaler = GradScaler()
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip2')) if LOG_ENABLED else None
 
-    with torch.no_grad():
-        for data_val in data_loader:
-            try:
-                acc = data_val[0].to(DEVICE).float()
-                ori_6d = data_val[2].to(DEVICE).float()
-                pose_6d_gt = data_val[6].to(DEVICE).float()
+    for epoch in range(start_epoch, epochs):
+        current_epoch = epoch + 1
+        model1.eval()  # model1在FDIP_2训练时不进行训练，只做前向推断
+        model2.train()
+        train_losses = []
+        epoch_pbar = tqdm(train_loader, desc=f"FDIP_2 Epoch {current_epoch}/{epochs}", leave=True)
+        for data in epoch_pbar:
+            acc = data[0].to(DEVICE, non_blocking=True).float()
+            ori_6d = data[2].to(DEVICE, non_blocking=True).float()
+            p_all = data[4].to(DEVICE, non_blocking=True).float()  # 24个关节的3D位置
 
-                # AGGRU_1: Leaf joint prediction
-                x1 = torch.cat((acc, ori_6d), -1)
-                input1 = x1.view(x1.shape[0], x1.shape[1], -1)
-                leaf_pred = model1(input1)
+            with torch.no_grad():  # FDIP_1 的推断不计算梯度
+                input1 = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
+                p_leaf_logits = model1(input1)
+                # p_leaf_logits是5个叶节点的预测位置，需要拼接根节点（第0个节点）的0位置
+                # 形状: [B, S, 5*3] -> [B, S, 6, 3]
+                zeros = torch.zeros(p_leaf_logits.shape[0], p_leaf_logits.shape[1], 3, device=DEVICE)  # 根节点的3D位置是0
+                p_leaf_pred = torch.cat(
+                    [zeros, p_leaf_logits.view(p_leaf_logits.shape[0], p_leaf_logits.shape[1], -1)], dim=2)
 
-                zeros = torch.zeros(leaf_pred.shape[:-1] + (3,), device=DEVICE)
-                leaf_pred_ext = torch.cat([leaf_pred, zeros], dim=-1)
-                leaf_pred_ext = leaf_pred_ext.view(*leaf_pred.shape[:-1], 6, 3)
+            # FDIP_2 的输入是acc, ori_6d和p_leaf_pred
+            # 这里的p_leaf_pred形状是[B, S, 6, 3]，与acc和ori_6d的节点维度对齐
+            # 拼接时需要展平
+            x2 = torch.cat([acc, ori_6d, p_leaf_pred.view(p_leaf_pred.shape[0], p_leaf_pred.shape[1], 6, 3)],
+                           dim=-1).view(
+                acc.shape[0], acc.shape[1], -1)
 
-                # AGGRU_2: All joint prediction
-                x2 = torch.cat((acc, ori_6d, leaf_pred_ext), -1)
-                input2 = x2.view(x2.shape[0], x2.shape[1], -1)
-                all_joints_pred = model2(input2)
+            # target是所有24个关节的3D位置，根关节位置补0 (这是针对模型输出设计的，根关节位置为0)
+            target = torch.cat([torch.zeros_like(p_all[:, :, 0:1, :]), p_all], dim=2).view(p_all.shape[0],
+                                                                                           p_all.shape[1], -1)  # 24*3
 
-                zeros = torch.zeros(all_joints_pred.shape[:-1] + (3,), device=DEVICE)
-                all_joints_pred_ext = torch.cat([all_joints_pred, zeros], dim=-1)
-                all_joints_pred_ext = all_joints_pred_ext.view(*all_joints_pred.shape[:-1], 24, 3)
+            optimizer.zero_grad(set_to_none=True)
+            with autocast():
+                logits = model2(x2)
+                loss = torch.sqrt(criterion(logits, target))
 
-                # AGGRU_3: Joint rotation prediction
-                x3 = torch.cat((acc, ori_6d), -1)
-                input_base = x3.view(x3.shape[0], x3.shape[1], -1)
-                joints_flattened = all_joints_pred_ext.view(x3.shape[0], x3.shape[1], -1)
-                input3 = torch.cat((input_base, joints_flattened), -1)
-
-                pose_pred = model3(input3)
-                pose_gt = pose_6d_gt.view(pose_6d_gt.shape[0], pose_6d_gt.shape[1], 144)
-
-                loss = torch.sqrt(criterion(pose_pred, pose_gt))
-                val_losses.append(loss.item())
-
-                errs = evaluator.eval(pose_pred, pose_gt)
-                all_sip_errs.append(errs[0, 0].item())
-                all_ang_errs.append(errs[1, 0].item())
-                all_pos_errs.append(errs[2, 0].item())
-                all_mesh_errs.append(errs[3, 0].item())
-                all_jerk_errs.append(errs[4, 0].item())
-            except Exception as e:
-                print(f"Error during evaluation: {e}")
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: NaN/Inf loss encountered at FDIP_2 Epoch {current_epoch}, skipping batch.")
                 continue
 
-    if val_losses:
-        avg_loss = sum(val_losses) / len(val_losses)
-        avg_sip_err = sum(all_sip_errs) / len(all_sip_errs)
-        avg_ang_err = sum(all_ang_errs) / len(all_ang_errs)
-        avg_pos_err = sum(all_pos_errs) / len(all_pos_errs)
-        avg_mesh_err = sum(all_mesh_errs) / len(all_mesh_errs)
-        avg_jerk_err = sum(all_jerk_errs) / len(all_jerk_errs)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            train_losses.append(loss.item())
+            epoch_pbar.set_postfix(loss=f"{loss.item():.4f}")
 
-        print(f"Complete Pipeline Evaluation Results:")
-        print(f"Average Loss: {avg_loss:.6f}")
-        print(f"SIP Error (deg): {avg_sip_err:.4f}")
-        print(f"Angular Error (deg): {avg_ang_err:.4f}")
-        print(f"Positional Error (cm): {avg_pos_err:.4f}")
-        print(f"Mesh Error (cm): {avg_mesh_err:.4f}")
-        print(f"Jitter Error (100m/s^3): {avg_jerk_err:.4f}")
+        # 验证阶段
+        model2.eval()
+        val_losses = []
+        with torch.no_grad():
+            for data_val in val_loader:
+                acc_val, ori_val, p_all_val = [d.to(DEVICE, non_blocking=True).float() for d in
+                                               (data_val[0], data_val[2], data_val[4])]
+                input1_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+                p_leaf_logits_val = model1(input1_val)
+                zeros_val = torch.zeros(p_leaf_logits_val.shape[0], p_leaf_logits_val.shape[1], 1, 3, device=DEVICE)
+                p_leaf_pred_val = torch.cat(
+                    [zeros_val, p_leaf_logits_val.view(p_leaf_logits_val.shape[0], p_leaf_logits_val.shape[1], 5, 3)],
+                    dim=2)
+
+                x2_val = torch.cat(
+                    (acc_val, ori_val, p_leaf_pred_val),
+                    -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+                target_val = torch.cat([torch.zeros_like(p_all_val[:, :, 0:1, :]), p_all_val], dim=2).view(
+                    p_all_val.shape[0],
+                    p_all_val.shape[1], -1)
+                logits_val = model2(x2_val)
+                loss_val = torch.sqrt(criterion(logits_val, target_val))
+
+                if torch.isnan(loss_val) or torch.isinf(loss_val):
+                    print(
+                        f"Warning: NaN/Inf loss encountered at FDIP_2 Epoch {current_epoch}, skipping validation batch.")
+                    continue
+
+                val_losses.append(loss_val.item())
+
+        avg_train_loss = np.mean(train_losses) if train_losses else 0.0
+        avg_val_loss = np.mean(val_losses) if val_losses else 0.0
+        current_lr = optimizer.param_groups[0]['lr']
+        print(
+            f'FDIP_2 Epoch {current_epoch}/{epochs} | Avg Train Loss: {avg_train_loss:.6f} | Avg Val Loss: {avg_val_loss:.6f} | LR: {current_lr:.6f}')
+
+        if LOG_ENABLED and writer:
+            writer.add_scalars('loss/fdip2', {'train': avg_train_loss, 'val': avg_val_loss}, current_epoch)
+            writer.add_scalar('learning_rate/fdip2', current_lr, current_epoch)
+
+        scheduler.step()
+        early_stopper(avg_val_loss, model2, optimizer, current_epoch)
+        if early_stopper.early_stop:
+            print(f"Early stopping triggered at epoch {current_epoch} for FDIP_2.")
+            break
+
+        # 🔥 每个epoch结束后清理内存
+        torch.cuda.empty_cache()
+
+    print(
+        f"FDIP_2 training finished. Loading best model from epoch {early_stopper.best_epoch} saved at {early_stopper.path}.")
+
+    if os.path.exists(early_stopper.path):
+        best_checkpoint = torch.load(early_stopper.path)
+        model2.load_state_dict(best_checkpoint['model_state_dict'])
+        del best_checkpoint  # 🔥 清理checkpoint
     else:
-        print("No evaluation results generated.")
+        print(f"Warning: Best model checkpoint not found at {early_stopper.path}. Using last epoch's model.")
 
-    return avg_loss, (avg_sip_err, avg_ang_err, avg_pos_err, avg_mesh_err, avg_jerk_err)
+    if writer:
+        writer.close()
+        del writer
 
-def main():
-    """Main function to run the training pipeline"""
-    print("===== Starting Training Pipeline =====")
-    create_directories()
-    train_loader, val_loader = load_data(train_percent=TRAIN_PERCENT)
+    # 🔥 清理训练过程中的临时变量
+    del criterion, scaler
+    torch.cuda.empty_cache()
 
-    total_start_time = time.time()
-    model1, train_predictions_1, val_predictions_1 = train_fdip_1(
-        train_loader, val_loader, pretrained_epoch=0, epochs=1
-    )
-    model2, train_predictions_2, val_predictions_2 = train_fdip_2(
-        train_loader, val_loader, train_predictions_1, val_predictions_1, pretrained_epoch=0, epochs=1
-    )
-    model3 = train_fdip_3(
-        train_loader, val_loader, train_predictions_2, val_predictions_2, pretrained_epoch=0, epochs=3
-    )
+    print("=========================== FDIP_2 Training Finished ==================================")
+    return model2
 
 
-    print("\nTraining complete! Saving final checkpoints...")
-    total_end_time = time.time()
-    total_training_time = total_end_time - total_start_time
-    print(f"Total training time for all three models: {total_training_time:.2f} seconds")
+def train_fdip_3(model1, model2, model3, optimizer, scheduler, train_loader, val_loader, epochs, early_stopper,
+                 start_epoch=0):
+    """训练 FDIP_3 模型，支持从指定轮数开始训练"""
+    print("\n======================== Starting FDIP_3 Training (Online Inference)====================")
+    criterion = nn.MSELoss()
+    scaler = GradScaler()
+    writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'ggip3')) if LOG_ENABLED else None
 
-    print("\nPerforming end-to-end evaluation of the complete pipeline...")
-    evaluate_pipeline(model1, model2, model3, val_loader)
+    for epoch in range(start_epoch, epochs):
+        current_epoch = epoch + 1
+        model1.eval()  # 不训练
+        model2.eval()  # 不训练
+        model3.train()
+        train_losses = []
+        epoch_pbar = tqdm(train_loader, desc=f"FDIP_3 Epoch {current_epoch}/{epochs}", leave=True)
+        for data in epoch_pbar:
+            acc, ori_6d, pose_6d_gt = [d.to(DEVICE, non_blocking=True).float() for d in
+                                       (data[0], data[2], data[6])]  # pose_6d_gt是24个关节的6D姿态
 
-    print("Training and evaluation complete!")
+            with torch.no_grad():  # FDIP_1 和 FDIP_2 的推断不计算梯度
+                input1 = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
+                p_leaf_logits = model1(input1)
+                zeros = torch.zeros(p_leaf_logits.shape[0], p_leaf_logits.shape[1], 1, 3, device=DEVICE)
+                p_leaf_pred = torch.cat(
+                    [zeros, p_leaf_logits.view(p_leaf_logits.shape[0], p_leaf_logits.shape[1], 5, 3)], dim=2)
 
+                input2 = torch.cat((acc, ori_6d, p_leaf_pred), -1).view(acc.shape[0], acc.shape[1], -1)
+                p_all_pos_flattened = model2(input2)  # FDIP_2 输出的所有24个关节的3D位置，展平
 
-if __name__ == '__main__':
-    main()
+            input_base = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)  # FDIP_3 的一部分输入
+
+            # 目标是所有24个关节的6D姿态，展平
+            target = pose_6d_gt.view(pose_6d_gt.shape[0], pose_6d_gt.shape[1], -1)  # 24*6 = 144
+
+            optimizer.zero_grad(set_to_none=True)
+            with autocast():
+                # FDIP_3 的输入是原始IMU数据和FDIP_2预测的所有关节位置
+                logits = model3(input_base, p_all_pos_flattened)
+                loss = torch.sqrt(criterion(logits, target))
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: NaN/Inf loss encountered at FDIP_3 Epoch {current_epoch}, skipping batch.")
+                continue
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            train_losses.append(loss.item())
+            epoch_pbar.set_postfix(loss=f"{loss.item():.4f}")
+
+        # 验证阶段
+        model3.eval()
+        val_losses = []
+        with torch.no_grad():
+            for data_val in val_loader:
+                acc_val, ori_val, pose_6d_gt_val = [d.to(DEVICE, non_blocking=True).float() for d in
+                                                    (data_val[0], data_val[2], data_val[6])]
+                input1_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+                p_leaf_logits_val = model1(input1_val)
+                zeros_val = torch.zeros(p_leaf_logits_val.shape[0], p_leaf_logits_val.shape[1], 3, device=DEVICE)
+                p_leaf_pred_val = torch.cat(
+                    [zeros_val, p_leaf_logits_val],
+                    dim=2)
+
+                input2_val = torch.cat(
+                    (acc_val, ori_val, p_leaf_pred_val.view(p_leaf_pred_val.shape[0], p_leaf_pred_val.shape[1], 6, 3)),
+                    -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+                p_all_pos_flattened_val = model2(input2_val)
+                input_base_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
+
+                target_val = pose_6d_gt_val.view(pose_6d_gt_val.shape[0], pose_6d_gt_val.shape[1], -1)
+                logits_val = model3(input_base_val, p_all_pos_flattened_val)
+                loss_val = torch.sqrt(criterion(logits_val, target_val))
+
+                if torch.isnan(loss_val) or torch.isinf(loss_val):
+                    print(
+                        f"Warning: NaN/Inf loss encountered at FDIP_3 Epoch {current_epoch}, skipping validation batch.")
+                    continue
+
+                val_losses.append(loss_val.item())
+
+            avg_train_loss = np.mean(train_losses) if train_losses else 0.0
+            avg_val_loss = np.mean(val_losses) if val_losses else 0.0
+            current_lr = optimizer.param_groups[0]['lr']
+            print(
+                f'FDIP_3 Epoch {current_epoch}/{epochs} | Avg Train Loss: {avg_train_loss:.6f} | Avg Val Loss: {avg_val_loss:.6f} | LR: {current_lr:.6f}')
+
+            if LOG_ENABLED and writer:
+                writer.add_scalars('loss/fdip3', {'train': avg_train_loss, 'val': avg_val_loss}, current_epoch)
+                writer.add_scalar('learning_rate/fdip3', current_lr, current_epoch)
+
+            scheduler.step()
+            early_stopper(avg_val_loss, model3, optimizer, current_epoch)
+            if early_stopper.early_stop:
+                print(f"Early stopping triggered at epoch {current_epoch} for FDIP_3.")
+                break
+
+            # 🔥 每个epoch结束后清理内存
+            torch.cuda.empty_cache()
+
+        print(
+            f"FDIP_3 training finished. Loading best model from epoch {early_stopper.best_epoch} saved at {early_stopper.path}.")
+        if os.path.exists(early_stopper.path):
+            best_checkpoint = torch.load(early_stopper.path)
+            model3.load_state_dict(best_checkpoint['model_state_dict'])
+        else:
+            print(f"Warning: Best model checkpoint not found at {early_stopper.path}. Using last epoch's model.")
+
+        if writer:
+            writer.close()
+            del writer  # 🔥 清理writer
+
+        # 🔥 清理训练过程中的临时变量
+        del criterion, scaler
+        torch.cuda.empty_cache()
+
+        print("================================ FDIP_3 Training Finished =======================================")
+        return model3
+
+    def clean_filename(filename):
+        """清理文件名，移除Windows中不允许的字符"""
+        invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
+        return filename
+
+    def evaluate_pipeline(model1, model2, model3, data_loader):
+        print("\n============================ Evaluating Complete Pipeline ======================================")
+
+        # 🔥 评估前清理内存
+        clear_memory()
+
+        eval_results_dir = os.path.join("GGIP", f"evaluate_pipeline_{TIMESTAMP}")
+        eval_plots_dir = os.path.join(eval_results_dir, "plots")
+        eval_data_dir = os.path.join(eval_results_dir, "data")
+
+        # 创建目录
+        os.makedirs(eval_results_dir, exist_ok=True)
+        os.makedirs(eval_plots_dir, exist_ok=True)
+        os.makedirs(eval_data_dir, exist_ok=True)
+
+        try:
+            evaluator = PerFramePoseEvaluator()
+            model1.eval()
+            model2.eval()
+            model3.eval()
+
+            all_errors = {
+                "pos_err": [],
+                "mesh_err": [],
+                "angle_err": [],
+                "jitter_err": []
+            }
+
+            print("Running model evaluation...")
+            with torch.no_grad():
+                for data_val in tqdm(data_loader, desc="Evaluating Pipeline"):
+                    try:
+                        # --- 模型前向传播 ---
+                        acc, ori_6d, pose_6d_gt = [d.to(DEVICE, non_blocking=True).float() for d in
+                                                   (data_val[0], data_val[2], data_val[6])]
+
+                        input1 = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
+                        p_leaf_logits = model1(input1)
+
+                        zeros1 = torch.zeros(p_leaf_logits.shape[0], p_leaf_logits.shape[1], 3, device=DEVICE)
+                        p_leaf_pred = torch.cat([zeros1, p_leaf_logits], dim=2)
+
+                        input2 = torch.cat(
+                            (acc, ori_6d, p_leaf_pred.view(p_leaf_pred.shape[0], p_leaf_pred.shape[1], 6, 3)),
+                            -1).view(acc.shape[0], acc.shape[1], -1)
+                        p_all_pos_flattened = model2(input2)
+                        input_base = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
+                        pose_pred_flat = model3(input_base, p_all_pos_flattened)
+
+                        batch_size, seq_len = pose_pred_flat.shape[:2]
+                        pose_pred = pose_pred_flat.view(batch_size, seq_len, 24, 6)
+
+                        errs_dict = evaluator.eval(pose_pred, pose_6d_gt)
+
+                        for key in all_errors.keys():
+                            if errs_dict[key].numel() > 0:
+                                all_errors[key].append(errs_dict[key].flatten().cpu())
+
+                    except Exception as e:
+                        print(f"Warning: Error processing batch in evaluation: {e}")
+                        continue
+
+            # 🔥 评估前清理内存
+            clear_memory()
+
+            # --- 汇总结果 ---
+            if all_errors["mesh_err"]:
+                print("Processing evaluation results...")
+
+                # 拼接所有误差数据
+                final_errors = {key: torch.cat(val, dim=0) for key, val in all_errors.items() if val}
+                avg_errors = {key: val.mean().item() for key, val in final_errors.items()}
+
+                # 打印结果
+                print("\nComplete Pipeline Evaluation Results (Mean):")
+                print(f"  - Positional Error (cm):      {avg_errors.get('pos_err', 'N/A'):.4f}")
+                print(f"  - Mesh Error (cm):            {avg_errors.get('mesh_err', 'N/A'):.4f}")
+                print(f"  - Angular Error (deg):        {avg_errors.get('angle_err', 'N/A'):.4f}")
+                print(f"  - Jitter Error (cm/s²):       {avg_errors.get('jitter_err', 'N/A'):.4f}")
+
+                # --- 保存数据到文件 ---
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                try:
+                    # 1. 保存原始误差数据 (pickle格式，保持完整的tensor数据)
+                    raw_data_path = os.path.join(eval_data_dir, f"raw_errors_{timestamp}.pkl")
+                    with open(raw_data_path, 'wb') as f:
+                        pickle.dump(final_errors, f)
+                    print(f"Raw error data saved to: {raw_data_path}")
+
+                    # 2. 保存统计结果 (JSON格式，易于阅读)
+                    stats_data = {
+                        "timestamp": timestamp,
+                        "evaluation_results": {
+                            "mean_errors": avg_errors,
+                            "sample_counts": {key: len(val) for key, val in final_errors.items()},
+                            "std_errors": {key: val.std().item() for key, val in final_errors.items()},
+                            "min_errors": {key: val.min().item() for key, val in final_errors.items()},
+                            "max_errors": {key: val.max().item() for key, val in final_errors.items()}
+                        },
+                        "units": {  # 添加单位信息
+                            "pos_err": "cm",
+                            "mesh_err": "cm",
+                            "angle_err": "degrees",
+                            "jitter_err": "cm/s²"
+                        }
+                    }
+
+                    stats_path = os.path.join(eval_data_dir, f"evaluation_stats_{timestamp}.json")
+                    with open(stats_path, 'w') as f:
+                        json.dump(stats_data, f, indent=2)
+                    print(f"Statistics saved to: {stats_path}")
+
+                    # 3. 保存为CSV格式 (方便Excel打开)
+                    csv_data = []
+                    for key, values in final_errors.items():
+                        for value in values.numpy():
+                            csv_data.append({
+                                'metric': key,
+                                'value': value,
+                                'timestamp': timestamp
+                            })
+
+                    if csv_data:
+                        df = pd.DataFrame(csv_data)
+                        csv_path = os.path.join(eval_data_dir, f"evaluation_data_{timestamp}.csv")
+                        df.to_csv(csv_path, index=False)
+                        print(f"CSV data saved to: {csv_path}")
+
+                except Exception as e:
+                    print(f"Warning: Error saving data files: {e}")
+
+                # --- 生成并保存图表 ---
+                print("\nSaving error distribution plots...")
+
+                # 修正后的单位映射
+                error_names_map = {
+                    "pos_err": "Positional Error (cm)",
+                    "mesh_err": "Mesh Error (cm)",
+                    "angle_err": "Angular Error (deg)",
+                    "jitter_err": "Jitter Error (cm/s²)"  # 修正单位
+                }
+
+                # 对应的y轴标签
+                ylabel_map = {
+                    "pos_err": "Error (cm)",
+                    "mesh_err": "Error (cm)",
+                    "angle_err": "Error (degrees)",
+                    "jitter_err": "Error (cm/s²)"  # 修正y轴标签
+                }
+
+                for key, full_name in error_names_map.items():
+                    if key in final_errors:
+                        try:
+                            plt.figure(figsize=(8, 6))
+                            sns.violinplot(data=final_errors[key].numpy(), color='skyblue', inner='box')
+
+                            # 使用正确的标题和y轴标签
+                            plt.title(f"{full_name} Distribution", fontsize=14, fontweight='bold')
+                            plt.ylabel(ylabel_map[key], fontsize=12)  # 使用具体的单位标签
+                            plt.xlabel("Distribution", fontsize=12)
+
+                            # 添加统计信息到图上
+                            mean_val = final_errors[key].mean().item()
+                            std_val = final_errors[key].std().item()
+                            plt.text(0.02, 0.98, f'Mean: {mean_val:.2f}\nStd: {std_val:.2f}',
+                                     transform=plt.gca().transAxes,
+                                     verticalalignment='top',
+                                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+                            # 清理文件名（移除特殊字符）
+                            clean_name = clean_filename(
+                                full_name.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_per_'))
+                            filename = f"{clean_name}_violin_{timestamp}.png"
+                            filepath = os.path.join(eval_plots_dir, filename)
+
+                            plt.savefig(filepath, bbox_inches='tight', dpi=300)
+                            plt.close()
+                            print(f"  - Saved: {filepath}")
+
+                        except Exception as e:
+                            print(f"Warning: Error saving plot for {key}: {e}")
+                            plt.close()
+                            continue
+
+                # --- 保存汇总报告 ---
+                try:
+                    report_path = os.path.join(eval_results_dir, f"evaluation_report_{timestamp}.txt")
+                    with open(report_path, 'w') as f:
+                        f.write("=== GGIP Pipeline Evaluation Report ===\n")
+                        f.write(f"Timestamp: {timestamp}\n")
+                        f.write(f"Total samples evaluated: {len(final_errors.get('mesh_err', []))}\n\n")
+
+                        f.write("Mean Errors:\n")
+                        unit_labels = {"pos_err": "cm", "mesh_err": "cm", "angle_err": "deg", "jitter_err": "cm/s²"}
+                        for key, value in avg_errors.items():
+                            unit = unit_labels.get(key, "")
+                            f.write(f"  - {key}: {value:.4f} {unit}\n")
+
+                        f.write("\nStandard Deviations:\n")
+                        for key, val in final_errors.items():
+                            unit = unit_labels.get(key, "")
+                            f.write(f"  - {key}: {val.std().item():.4f} {unit}\n")
+
+                        f.write("\nData Files Generated:\n")
+                        f.write(f"  - Raw data: raw_errors_{timestamp}.pkl\n")
+                        f.write(f"  - Statistics: evaluation_stats_{timestamp}.json\n")
+                        f.write(f"  - CSV data: evaluation_data_{timestamp}.csv\n")
+                        f.write(f"  - Plots: Located in plots/ subdirectory\n")
+
+                    print(f"Evaluation report saved to: {report_path}")
+
+                except Exception as e:
+                    print(f"Warning: Error saving evaluation report: {e}")
+
+            else:
+                print("No evaluation results were generated.")
+
+                # 即使没有结果也保存一个空报告
+                try:
+                    empty_report_path = os.path.join(eval_results_dir,
+                                                     f"evaluation_report_empty_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+                    with open(empty_report_path, 'w') as f:
+                        f.write("=== GGIP Pipeline Evaluation Report ===\n")
+                        f.write(f"Timestamp: {datetime.now().strftime('%Y%m%d_%H%M%S')}\n")
+                        f.write("Status: No evaluation results were generated.\n")
+                        f.write("Possible reasons: Empty dataset, evaluation errors, or model issues.\n")
+                    print(f"Empty evaluation report saved to: {empty_report_path}")
+                except Exception as e:
+                    print(f"Warning: Error saving empty report: {e}")
+
+        except Exception as e:
+            print(f"Critical error in evaluation pipeline: {e}")
+            print("Continuing with main program execution...")
+
+            # 保存错误报告
+            try:
+                error_report_path = os.path.join(eval_results_dir,
+                                                 f"evaluation_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+                with open(error_report_path, 'w') as f:
+                    f.write("=== GGIP Pipeline Evaluation Error Report ===\n")
+                    f.write(f"Timestamp: {datetime.now().strftime('%Y%m%d_%H%M%S')}\n")
+                    f.write(f"Error: {str(e)}\n")
+                    f.write(f"Error Type: {type(e).__name__}\n")
+                print(f"Error report saved to: {error_report_path}")
+            except:
+                print("Could not save error report")
+
+        print(f"\nEvaluation completed. Results saved in: {eval_results_dir}")
+
+    def main():
+        """主函数，运行完整的训练和评估流程，并支持从断点恢复。"""
+        # 设置日志系统（在所有输出之前）
+        setup_logging()
+
+        try:
+            set_seed(SEED)
+            print("==================== Starting Full Training Pipeline =====================")
+            create_directories()
+
+            try:
+                train_loader, val_loader = load_data_separate()
+                print("✓ Using separate train/validation datasets - No data leakage risk!")
+            except Exception as e:
+                print(f"❌ Failed to load separate datasets: {e}")
+                print("⚠️  Falling back to legacy split method (may have data leakage risk)")
+                train_loader, val_loader = load_data_legacy(train_percent=0.9)
+
+            patience = PATIENCE
+            max_epochs = MAX_EPOCHS
+            total_start_time = time.time()
+
+            # --- 阶段 1: FDIP_1 ---
+            print("\n--- Initializing Stage 1: FDIP_1 ---")
+            model1 = FDIP_1(input_dim=6 * 9, output_dim=5 * 3).to(DEVICE)
+            checkpoint_path1 = os.path.join(CHECKPOINT_DIR, 'ggip1', 'best_model_fdip1.pth')
+            # 定义阶段1的完成标记文件路径
+            completion_marker1 = os.path.join(CHECKPOINT_DIR, 'ggip1', 'fdip1_completed.marker')
+
+            # 检查阶段1是否已经完成
+            if os.path.exists(completion_marker1):
+                print("Stage 1 (FDIP_1) already completed. Loading best model and skipping training.")
+                if os.path.exists(checkpoint_path1):
+                    checkpoint = torch.load(checkpoint_path1, map_location=DEVICE)
+                    model1.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Successfully loaded best model for FDIP_1 from {checkpoint_path1}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print(f"Error: Completion marker found, but checkpoint file {checkpoint_path1} is missing!")
+                    print("Please resolve this inconsistency or remove the marker file to re-train.")
+                    sys.exit(1)  # 终止程序，因为状态不一致
+            else:
+                # 优化器决定如何根据梯度更新参数、调度器决定何时调整学习率大小
+                optimizer1 = optim.Adam(model1.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+                scheduler1 = optim.lr_scheduler.CosineAnnealingLR(optimizer1, T_max=max_epochs, eta_min=1e-6)
+                early_stopper1 = EarlyStopping(patience=patience, path=checkpoint_path1, verbose=True)
+                start_epoch1 = 0
+
+                if os.path.exists(checkpoint_path1):
+                    print(f"Found checkpoint for FDIP_1. Resuming training from: {checkpoint_path1}")
+                    checkpoint = torch.load(checkpoint_path1, map_location=DEVICE)
+                    model1.load_state_dict(checkpoint['model_state_dict'])
+                    optimizer1.load_state_dict(checkpoint['optimizer_state_dict'])
+                    start_epoch1 = checkpoint['epoch']
+                    early_stopper1.val_loss_min = checkpoint['val_loss_min']
+                    early_stopper1.best_score = checkpoint['best_score']
+                    early_stopper1.counter = checkpoint.get('early_stopping_counter', 0)
+                    for _ in range(start_epoch1):
+                        scheduler1.step()
+                    print(
+                        f"Resuming from Epoch {start_epoch1 + 1}. Best validation loss so far: {early_stopper1.val_loss_min:.6f}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print("No checkpoint found for FDIP_1. Starting training from scratch.")
+
+                model1 = train_fdip_1(
+                    model=model1,
+                    optimizer=optimizer1,
+                    scheduler=scheduler1,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    epochs=max_epochs,
+                    early_stopper=early_stopper1,
+                    start_epoch=start_epoch1
+                )
+
+                # 训练成功结束后，创建完成标记文件
+                with open(completion_marker1, 'w') as f:
+                    f.write(f"Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(
+                        f"Best model saved at epoch {early_stopper1.best_epoch} with val_loss {early_stopper1.val_loss_min:.6f}\n")
+                print(f"Stage 1 (FDIP_1) marked as completed.")
+
+                # 🔥 清理Stage 1的训练对象，释放内存
+                cleanup_training_objects(optimizer1, scheduler1, early_stopper1)
+                print("Stage 1 training objects cleaned up.")
+
+            # --- 阶段 2: FDIP_2 ---
+            print("\n--- Initializing Stage 2: FDIP_2 ---")
+            model2 = FDIP_2(input_dim=6 * 12, output_dim=24 * 3).to(DEVICE)
+            checkpoint_path2 = os.path.join(CHECKPOINT_DIR, 'ggip2', 'best_model_fdip2.pth')
+            completion_marker2 = os.path.join(CHECKPOINT_DIR, 'ggip2', 'fdip2_completed.marker')
+
+            if os.path.exists(completion_marker2):
+                print("Stage 2 (FDIP_2) already completed. Loading best model and skipping training.")
+                if os.path.exists(checkpoint_path2):
+                    checkpoint = torch.load(checkpoint_path2, map_location=DEVICE)
+                    model2.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Successfully loaded best model for FDIP_2 from {checkpoint_path2}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print(f"Error: Completion marker found, but checkpoint file {checkpoint_path2} is missing!")
+                    sys.exit(1)
+            else:
+                optimizer2 = optim.Adam(model2.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+                scheduler2 = optim.lr_scheduler.CosineAnnealingLR(optimizer2, T_max=max_epochs, eta_min=1e-6)
+                early_stopper2 = EarlyStopping(patience=patience, path=checkpoint_path2, verbose=True)
+                start_epoch2 = 0
+
+                if os.path.exists(checkpoint_path2):
+                    print(f"Found checkpoint for FDIP_2. Resuming training from: {checkpoint_path2}")
+                    checkpoint = torch.load(checkpoint_path2, map_location=DEVICE)
+                    model2.load_state_dict(checkpoint['model_state_dict'])
+                    optimizer2.load_state_dict(checkpoint['optimizer_state_dict'])
+                    start_epoch2 = checkpoint['epoch']
+                    early_stopper2.val_loss_min = checkpoint['val_loss_min']
+                    early_stopper2.best_score = checkpoint['best_score']
+                    early_stopper2.counter = checkpoint.get('early_stopping_counter', 0)
+                    for _ in range(start_epoch2):
+                        scheduler2.step()
+                    print(
+                        f"Resuming from Epoch {start_epoch2 + 1}. Best validation loss so far: {early_stopper2.val_loss_min:.6f}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print("No checkpoint found for FDIP_2. Starting training from scratch.")
+
+                model2 = train_fdip_2(
+                    model1=model1,
+                    model2=model2,
+                    optimizer=optimizer2,
+                    scheduler=scheduler2,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    epochs=max_epochs,
+                    early_stopper=early_stopper2,
+                    start_epoch=start_epoch2
+                )
+
+                with open(completion_marker2, 'w') as f:
+                    f.write(f"Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(
+                        f"Best model saved at epoch {early_stopper2.best_epoch} with val_loss {early_stopper2.val_loss_min:.6f}\n")
+                print(f"Stage 2 (FDIP_2) marked as completed.")
+
+                # 🔥 清理Stage 2的训练对象，释放内存
+                cleanup_training_objects(optimizer2, scheduler2, early_stopper2)
+                print("Stage 2 training objects cleaned up.")
+
+            # --- 阶段 3: FDIP_3 ---
+            print("\n--- Initializing Stage 3: FDIP_3 ---")
+            model3 = FDIP_3(input_dim=288, output_dim=24 * 6).to(DEVICE)
+            checkpoint_path3 = os.path.join(CHECKPOINT_DIR, 'ggip3', 'best_model_fdip3.pth')
+            completion_marker3 = os.path.join(CHECKPOINT_DIR, 'ggip3', 'fdip3_completed.marker')
+
+            if os.path.exists(completion_marker3):
+                print("Stage 3 (FDIP_3) already completed. Loading best model and skipping training.")
+                if os.path.exists(checkpoint_path3):
+                    checkpoint = torch.load(checkpoint_path3, map_location=DEVICE)
+                    model3.load_state_dict(checkpoint['model_state_dict'])
+                    print(f"Successfully loaded best model for FDIP_3 from {checkpoint_path3}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print(f"Error: Completion marker found, but checkpoint file {checkpoint_path3} is missing!")
+                    sys.exit(1)
+            else:
+                optimizer3 = optim.Adam(model3.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+                scheduler3 = optim.lr_scheduler.CosineAnnealingLR(optimizer3, T_max=max_epochs, eta_min=1e-6)
+                early_stopper3 = EarlyStopping(patience=patience, path=checkpoint_path3, verbose=True)
+                start_epoch3 = 0
+
+                if os.path.exists(checkpoint_path3):
+                    print(f"Found checkpoint for FDIP_3. Resuming training from: {checkpoint_path3}")
+                    checkpoint = torch.load(checkpoint_path3, map_location=DEVICE)
+                    model3.load_state_dict(checkpoint['model_state_dict'])
+                    optimizer3.load_state_dict(checkpoint['optimizer_state_dict'])
+                    start_epoch3 = checkpoint['epoch']
+                    early_stopper3.val_loss_min = checkpoint['val_loss_min']
+                    early_stopper3.best_score = checkpoint['best_score']
+                    early_stopper3.counter = checkpoint.get('early_stopping_counter', 0)
+                    for _ in range(start_epoch3):
+                        scheduler3.step()
+                    print(
+                        f"Resuming from Epoch {start_epoch3 + 1}. Best validation loss so far: {early_stopper3.val_loss_min:.6f}")
+                    del checkpoint  # 清理checkpoint
+                else:
+                    print("No checkpoint found for FDIP_3. Starting training from scratch.")
+
+                model3 = train_fdip_3(
+                    model1=model1,
+                    model2=model2,
+                    model3=model3,
+                    optimizer=optimizer3,
+                    scheduler=scheduler3,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    epochs=max_epochs,
+                    early_stopper=early_stopper3,
+                    start_epoch=start_epoch3
+                )
+
+                with open(completion_marker3, 'w') as f:
+                    f.write(f"Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(
+                        f"Best model saved at epoch {early_stopper3.best_epoch} with val_loss {early_stopper3.val_loss_min:.6f}\n")
+                print(f"Stage 3 (FDIP_3) marked as completed.")
+
+                # 🔥 清理Stage 3的训练对象，释放内存
+                cleanup_training_objects(optimizer3, scheduler3, early_stopper3)
+                print("Stage 3 training objects cleaned up.")
+
+            print("\nAll training stages complete!")
+            total_end_time = time.time()
+            print(f"Total training time: {(total_end_time - total_start_time) / 3600:.2f} hours")
+
+            # 最终评估前再次清理内存
+            clear_memory()
+            evaluate_pipeline(model1, model2, model3, val_loader)
+
+            print("\nTraining and evaluation finished successfully!")
+
+        except Exception as e:
+            print(f"Critical error in main function: {e}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            print("Full traceback:")
+            print(traceback.format_exc())
+
+        finally:
+            # 确保关闭日志系统
+            close_logging()
+
+    if __name__ == '__main__':
+        main()
+

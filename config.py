@@ -11,11 +11,11 @@ import torch
 #               'BioMotionLab_NTroje', 'BMLhandball', 'MPI_Limits', 'DFaust67']
 amass_data = ['ACC BMLrub', 'CMU', 'DanceDB', 'DFaust', 'EKUT', 'EyesJapanDataset',
               'HDM05', 'HUMAN4D', 'HEva', 'KIT', 'Mosh', 'SFU', 'TotalCapture', 'Transitions', 'PosePrior', 'SSM', 'TCDHands']
-amass_data_test_tmp = ['DanceDB']
+amass_data_test_tmp = ['MoSh']
 
 class paths:
     raw_amass_dir = r'D:\Dataset\AMASS'      # 原始 AMASS 数据集路径
-    amass_dir = 'D:\Dataset\AMASS\DanceDB\pt'    # 处理后的 AMASS 数据集输出路径
+    amass_dir = 'D:\Dataset\AMASS\MPI_mosh\pt'    # 处理后的 AMASS 数据集输出路径
 
     raw_dipimu_dir = 'F:\CodeForPaper\Dataset\DIPIMUandOthers\DIP_IMU\DIP_IMU'   # 原始 DIP-IMU 数据集路径
     dipimu_dir = 'D:\Dataset\DIPIMUandOthers\DIP_6\Detail'      # 处理后的 DIP-IMU 数据集输出路径
