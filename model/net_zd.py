@@ -2,7 +2,7 @@ import os
 import sys
 
 from model.DFTFPE import DSTFPE
-from model.MSFKE import NodeAwareMSFKE
+from model.MSFKE_A import NodeAwareMSFKE
 import torch
 
 

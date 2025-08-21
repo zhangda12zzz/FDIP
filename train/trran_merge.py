@@ -6,8 +6,6 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import random
-import seaborn as sns
-import matplotlib.pyplot as plt
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
@@ -25,7 +23,7 @@ import argparse
 
 # --- Configuration ---
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 5e-5
 WEIGHT_DECAY = 1e-3
 BATCH_SIZE = 64
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -39,24 +37,144 @@ DELTA = 0
 
 # --- Paths ---
 TRAIN_DATA_FOLDERS = [
-    os.path.join("D:\\", "Dataset", "TotalCapture_Real_60FPS", "KaPt", "split_actions"),
-    os.path.join("D:\\", "Dataset", "DIPIMUandOthers", "DIP_6", "Detail"),
-    os.path.join("D:\\", "Dataset", "AMASS", "DanceDB", "pt"),
-    os.path.join("D:\\", "Dataset", "AMASS", "HumanEva", "pt"),
+    os.path.join("F:\\", "IMUdata", "TotalCapture_Real_60FPS", "KaPt"),
+    os.path.join("F:\\", "IMUdata", "DIPIMUandOthers", "DIP_6"),
+    os.path.join("F:\\", "IMUdata", "AMASS", "DanceDB", "pt"),
+    os.path.join("F:\\", "IMUdata", "AMASS", "HumanEva", "pt"),
 ]
 VAL_DATA_FOLDERS = [
-    os.path.join("D:\\", "Dataset", "SingleOne", "pt"),
+    os.path.join("F:\\", "IMUdata", "SingleOne", "pt"),
 ]
 
 TIMESTAMP = None
 CHECKPOINT_DIR = None
 LOG_DIR = "log"
 LOG_RUN_DIR = None
-TRAINING_MODE = None  # 新增：训练模式标识
+TRAINING_MODE = None
+
+
+class DataNormalizer:
+    """数据标准化器"""
+
+    def __init__(self):
+        self.acc_mean = None
+        self.acc_std = None
+        self.ori_mean = None
+        self.ori_std = None
+        self.pos_mean = None
+        self.pos_std = None
+
+    def fit(self, train_loader):
+        """在训练数据上计算统计量"""
+        print("Computing normalization statistics...")
+        acc_vals, ori_vals, pos_vals = [], [], []
+
+        for data in tqdm(train_loader, desc="Computing stats"):
+            acc_vals.append(data[0])
+            ori_vals.append(data[2])
+            pos_vals.append(data[3])
+
+        acc_all = torch.cat(acc_vals, dim=0)    # 第一个维度为0
+        ori_all = torch.cat(ori_vals, dim=0)
+        pos_all = torch.cat(pos_vals, dim=0)
+
+        self.acc_mean = acc_all.mean(dim=(0, 1), keepdim=True)       # dim=(0, 1): 在第0维和第1维上计算均值
+        self.acc_std = acc_all.std(dim=(0, 1), keepdim=True) + 1e-8
+        self.ori_mean = ori_all.mean(dim=(0, 1), keepdim=True)
+        self.ori_std = ori_all.std(dim=(0, 1), keepdim=True) + 1e-8
+        self.pos_mean = pos_all.mean(dim=(0, 1), keepdim=True)
+        self.pos_std = pos_all.std(dim=(0, 1), keepdim=True) + 1e-8
+
+        print(f"Acc range: [{acc_all.min():.3f}, {acc_all.max():.3f}]")
+        print(f"Ori range: [{ori_all.min():.3f}, {ori_all.max():.3f}]")
+        print(f"Pos range: [{pos_all.min():.3f}, {pos_all.max():.3f}]")
+
+    def normalize(self, acc, ori, pos):
+        """标准化数据"""
+        acc_norm = (acc - self.acc_mean.to(acc.device)) / self.acc_std.to(acc.device)
+        ori_norm = (ori - self.ori_mean.to(ori.device)) / self.ori_std.to(ori.device)
+        pos_norm = (pos - self.pos_mean.to(pos.device)) / self.pos_std.to(pos.device)
+        return acc_norm, ori_norm, pos_norm
+
+    # 在DataNormalizer类中添加这个方法
+    def normalize_pos_only(self, pos):
+        """标准化位置数据 - 支持不同关节数量"""
+        if pos.dim() == 4:  # [B, S, J, 3] 格式
+            B, S, J, _ = pos.shape
+            pos_flat = pos.view(B, S, -1)  # [B, S, J*3]
+
+            if hasattr(self, 'pos_mean') and hasattr(self, 'pos_std'):
+                expected_dim = self.pos_mean.shape[-1]
+                if pos_flat.shape[-1] != expected_dim:
+                    pos_mean = pos_flat.mean(dim=(0, 1), keepdim=True)
+                    pos_std = pos_flat.std(dim=(0, 1), keepdim=True) + 1e-8
+                else:
+                    pos_mean = self.pos_mean.to(pos.device)
+                    pos_std = self.pos_std.to(pos.device)
+            else:
+                pos_mean = pos_flat.mean(dim=(0, 1), keepdim=True)
+                pos_std = pos_flat.std(dim=(0, 1), keepdim=True) + 1e-8
+
+            pos_norm = (pos_flat - pos_mean) / pos_std
+            return pos_norm.view(B, S, J, 3)
+        else:
+            if hasattr(self, 'pos_mean') and hasattr(self, 'pos_std'):
+                return (pos - self.pos_mean.to(pos.device)) / self.pos_std.to(pos.device)
+            else:
+                return pos
+
+    def denormalize_pos(self, pos_norm):
+        """反标准化位置数据"""
+        return pos_norm * self.pos_std.to(pos_norm.device) + self.pos_mean.to(pos_norm.device)
+
+    def save(self, path):
+        """保存标准化参数"""
+        torch.save({
+            'acc_mean': self.acc_mean,
+            'acc_std': self.acc_std,
+            'ori_mean': self.ori_mean,
+            'ori_std': self.ori_std,
+            'pos_mean': self.pos_mean,
+            'pos_std': self.pos_std,
+        }, path)
+
+    def load(self, path):
+        """加载标准化参数"""
+        checkpoint = torch.load(path)
+        self.acc_mean = checkpoint['acc_mean']
+        self.acc_std = checkpoint['acc_std']
+        self.ori_mean = checkpoint['ori_mean']
+        self.ori_std = checkpoint['ori_std']
+        self.pos_mean = checkpoint['pos_mean']
+        self.pos_std = checkpoint['pos_std']
+
+
+def improved_data_check(acc, ori_6d, pos=None):
+    """改进的数据质量检查"""
+    # 更宽松的极值检查
+    acc_max_threshold = 500.0
+    ori_max_threshold = 10.0  # 降低阈值
+
+    # NaN/Inf检查
+    if (torch.isnan(acc).any() or torch.isnan(ori_6d).any() or
+            torch.isinf(acc).any() or torch.isinf(ori_6d).any()):
+        return False, "NaN/Inf detected"
+
+    if pos is not None:
+        if torch.isnan(pos).any() or torch.isinf(pos).any():
+            return False, "NaN/Inf in position data"
+
+    # 极值检查
+    if acc.abs().max() > acc_max_threshold:
+        return False, f"Extreme acc values: {acc.abs().max():.3f}"
+
+    if ori_6d.abs().max() > ori_max_threshold:
+        return False, f"Extreme ori values: {ori_6d.abs().max():.3f}"
+
+    return True, "OK"
 
 
 # ===== 改进的模型类 =====
-
 class FDIP_2_Residual(nn.Module):
     """改进的FDIP_2，加入残差连接和门控机制"""
 
@@ -181,7 +299,7 @@ class MultiModelEarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.delta = delta
         self.path = path
         self.best_epoch = 0
@@ -339,7 +457,7 @@ def cleanup_training_objects(*objects):
 
 
 def load_data_unified_split(train_percent=0.8, val_percent=0.2, seed=None):
-    """统一加载所有数据集，然后随机划分"""
+    """统一加载所有数据集，然后随机划分，并计算标准化参数"""
     print("Loading unified dataset with consistent split method...")
 
     if seed is not None:
@@ -376,6 +494,21 @@ def load_data_unified_split(train_percent=0.8, val_percent=0.2, seed=None):
 
     num_workers = 0 if sys.platform == "win32" else 4
 
+    # 创建训练数据加载器（用于计算标准化参数）
+    train_loader_for_norm = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,  # 计算统计量时不需要shuffle
+        pin_memory=True,
+        num_workers=num_workers
+    )
+
+    # 计算标准化参数
+    print("📊 Computing normalization statistics...")
+    normalizer = DataNormalizer()
+    normalizer.fit(train_loader_for_norm)
+
+    # 创建正式的数据加载器
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
@@ -396,7 +529,7 @@ def load_data_unified_split(train_percent=0.8, val_percent=0.2, seed=None):
     print(f"  - Training batches: {len(train_loader)}")
     print(f"  - Validation batches: {len(val_loader)}")
 
-    return train_loader, val_loader
+    return train_loader, val_loader, normalizer
 
 
 def check_data_distribution(train_loader, val_loader, num_samples=5):
@@ -479,25 +612,56 @@ def rotation_matrix_loss(pred_6d, target_6d):
     return loss
 
 
-# ===== 端到端联合训练函数 =====
+def rotation_matrix_loss_stable(pred_6d, target_6d):
+    """数值稳定的旋转矩阵损失"""
+    try:
+        batch_size, seq_len, joints, _ = pred_6d.shape
+        pred_6d_flat = pred_6d.reshape(-1, 6)
+        target_6d_flat = target_6d.reshape(-1, 6)
 
-def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_loader, val_loader, epochs,
-                           early_stopper, start_epoch=0):
-    """端到端联合训练所有三个模型"""
+        # 检查输入有效性
+        if torch.isnan(pred_6d_flat).any() or torch.isnan(target_6d_flat).any():
+            return torch.tensor(1.0, device=pred_6d.device, requires_grad=True)
+
+        pred_rotmat = r6d_to_rotation_matrix(pred_6d_flat)
+        target_rotmat = r6d_to_rotation_matrix(target_6d_flat)
+
+        # 检查旋转矩阵有效性
+        if torch.isnan(pred_rotmat).any() or torch.isnan(target_rotmat).any():
+            return torch.tensor(1.0, device=pred_6d.device, requires_grad=True)
+
+        # 使用更稳定的损失计算
+        diff = pred_rotmat - target_rotmat
+        loss = torch.mean(torch.norm(diff, dim=(-2, -1)) + 1e-8)
+
+        # 最终检查
+        if torch.isnan(loss) or torch.isinf(loss):
+            return torch.tensor(1.0, device=pred_6d.device, requires_grad=True)
+
+        return loss
+    except Exception as e:
+        print(f"Error in rotation_matrix_loss: {e}")
+        return torch.tensor(1.0, device=pred_6d.device, requires_grad=True)
+
+
+# ===== 端到端联合训练函数 =====
+def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_loader, val_loader,
+                           normalizer, epochs, early_stopper, start_epoch=0):
+    """端到端联合训练所有三个模型（包含数据标准化）"""
     print("\n====================== Starting End-to-End Joint Training =========================")
     print(f"🚀 Using Joint E2E Training Mode - All models trained simultaneously")
     print(f"📊 Checkpoint saving to: {early_stopper.path}")
+    print(f"📏 Data normalization: Enabled")
 
     criterion = nn.MSELoss()
     scaler = GradScaler()
-    # 使用专门的联合训练日志目录
     writer = SummaryWriter(os.path.join(LOG_RUN_DIR, 'joint_e2e_logs')) if LOG_ENABLED else None
 
     # 定义多任务损失权重
     loss_weights = {
-        'leaf_pos': 1.0,
-        'all_pos': 1.5,
-        'pose_6d': 3.0
+        'leaf_pos': 0.5,
+        'all_pos': 0.8,
+        'pose_6d': 1.0
     }
 
     print(f"📈 Loss weights: {loss_weights}")
@@ -512,6 +676,10 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
         train_losses = {'total': [], 'leaf_pos': [], 'all_pos': [], 'pose_6d': []}
         epoch_pbar = tqdm(train_loader, desc=f"🔄 Joint E2E Epoch {current_epoch}/{epochs}", leave=True)
 
+        valid_batches = 0
+        skipped_batches = 0
+
+        # === 训练循环 ===
         for data in epoch_pbar:
             acc = data[0].to(DEVICE, non_blocking=True).float()
             ori_6d = data[2].to(DEVICE, non_blocking=True).float()
@@ -519,56 +687,80 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
             p_all_gt = data[4].to(DEVICE, non_blocking=True).float()
             pose_6d_gt = data[6].to(DEVICE, non_blocking=True).float()
 
+            # 数据质量检查
+            is_valid, reason = improved_data_check(acc, ori_6d, p_leaf_gt)
+            if not is_valid:
+                skipped_batches += 1
+                if skipped_batches <= 5:  # 只显示前5个警告
+                    print(f"Warning: Skipping batch - {reason}")
+                continue
+
+            # 🔥 应用数据标准化
+            try:
+                acc_norm, ori_6d_norm, p_leaf_gt_norm = normalizer.normalize(acc, ori_6d, p_leaf_gt)
+                p_all_gt_norm = normalizer.normalize_pos_only(p_all_gt)
+            except Exception as e:
+                print(f"Error in normalization: {e}")
+                continue
+
             optimizer.zero_grad(set_to_none=True)
 
             with autocast():
-                # === 级联前向传播 ===
+                # === 使用标准化数据进行前向传播 ===
                 # FDIP_1: 预测叶节点位置
-                input1 = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
-                p_leaf_pred = model1(input1)
+                input1 = torch.cat((acc_norm, ori_6d_norm), -1).view(acc_norm.shape[0], acc_norm.shape[1], -1)
+                p_leaf_pred_norm = model1(input1)
 
                 # FDIP_2: 预测所有关节位置
-                zeros = torch.zeros(p_leaf_pred.shape[0], p_leaf_pred.shape[1], 3, device=DEVICE)
-                p_leaf_with_root = torch.cat([zeros, p_leaf_pred.view(p_leaf_pred.shape[0], p_leaf_pred.shape[1], -1)],
-                                             dim=2)
+                zeros = torch.zeros(p_leaf_pred_norm.shape[0], p_leaf_pred_norm.shape[1], 3, device=DEVICE)
+                p_leaf_with_root_norm = torch.cat(
+                    [zeros, p_leaf_pred_norm.view(p_leaf_pred_norm.shape[0], p_leaf_pred_norm.shape[1], -1)], dim=2)
                 input2 = torch.cat(
-                    [acc, ori_6d, p_leaf_with_root.view(p_leaf_with_root.shape[0], p_leaf_with_root.shape[1], 6, 3)],
-                    dim=-1).view(acc.shape[0], acc.shape[1], -1)
-                p_all_pred = model2(input2)
+                    [acc_norm, ori_6d_norm,
+                     p_leaf_with_root_norm.view(p_leaf_with_root_norm.shape[0], p_leaf_with_root_norm.shape[1], 6, 3)],
+                    dim=-1).view(acc_norm.shape[0], acc_norm.shape[1], -1)
+                p_all_pred_norm = model2(input2)
 
-                # FDIP_3: 预测6D姿态
-                input_base = torch.cat((acc, ori_6d), -1).view(acc.shape[0], acc.shape[1], -1)
-                pose_6d_pred = model3(input_base, p_all_pred)
+                # FDIP_3: 预测6D姿态（注意：6D姿态通常不需要标准化）
+                input_base = torch.cat((acc_norm, ori_6d_norm), -1).view(acc_norm.shape[0], acc_norm.shape[1], -1)
+                pose_6d_pred = model3(input_base, p_all_pred_norm)
 
-                # === 计算多任务损失 ===
+                # === 计算损失（在标准化空间中） ===
                 # 叶节点位置损失
-                loss_leaf = torch.sqrt(criterion(p_leaf_pred, p_leaf_gt.view(-1, p_leaf_gt.shape[1], 15)))
+                loss_leaf = criterion(p_leaf_pred_norm, p_leaf_gt_norm.view(-1, p_leaf_gt_norm.shape[1], 15))
 
                 # 所有关节位置损失
-                p_all_target = torch.cat([torch.zeros_like(p_all_gt[:, :, 0:1, :]), p_all_gt], dim=2).view(
-                    p_all_gt.shape[0], p_all_gt.shape[1], -1)
-                loss_all_pos = torch.sqrt(criterion(p_all_pred, p_all_target))
+                p_all_target_norm = torch.cat([torch.zeros_like(p_all_gt_norm[:, :, 0:1, :]), p_all_gt_norm],
+                                              dim=2).view(
+                    p_all_gt_norm.shape[0], p_all_gt_norm.shape[1], -1)
+                loss_all_pos = criterion(p_all_pred_norm, p_all_target_norm)
 
-                # 6D姿态损失
+                # 6D姿态损失（通常在原始空间中计算）
                 batch_size, seq_len = pose_6d_pred.shape[:2]
                 pose_pred_reshaped = pose_6d_pred.view(batch_size, seq_len, 24, 6)
-                loss_pose = rotation_matrix_loss(pose_pred_reshaped, pose_6d_gt)
+                loss_pose = rotation_matrix_loss_stable(pose_pred_reshaped, pose_6d_gt)
 
                 # 加权总损失
                 total_loss = (loss_weights['leaf_pos'] * loss_leaf +
                               loss_weights['all_pos'] * loss_all_pos +
                               loss_weights['pose_6d'] * loss_pose)
 
-            if torch.isnan(total_loss) or torch.isinf(total_loss):
-                print(f"Warning: NaN/Inf loss at epoch {current_epoch}, skipping batch.")
+            # 损失检查
+            if torch.isnan(total_loss) or torch.isinf(total_loss) or total_loss > 100:
+                skipped_batches += 1
                 continue
 
             scaler.scale(total_loss).backward()
 
             # 梯度裁剪
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_([p for model in [model1, model2, model3] for p in model.parameters()],
-                                           max_norm=1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                [p for model in [model1, model2, model3] for p in model.parameters()],
+                max_norm=1.0)
+
+            if torch.isnan(grad_norm):
+                skipped_batches += 1
+                continue
 
             scaler.step(optimizer)
             scaler.update()
@@ -578,65 +770,94 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
             train_losses['leaf_pos'].append(loss_leaf.item())
             train_losses['all_pos'].append(loss_all_pos.item())
             train_losses['pose_6d'].append(loss_pose.item())
+            valid_batches += 1
 
             epoch_pbar.set_postfix({
                 'total': f"{total_loss.item():.4f}",
                 'leaf': f"{loss_leaf.item():.4f}",
                 'pos': f"{loss_all_pos.item():.4f}",
-                'pose': f"{loss_pose.item():.4f}"
+                'pose': f"{loss_pose.item():.4f}",
+                'valid': f"{valid_batches}/{valid_batches + skipped_batches}"
             })
+
+        print(f"📊 Epoch {current_epoch}: Valid batches: {valid_batches}, Skipped: {skipped_batches}")
 
         # === 验证阶段 ===
         model1.eval()
         model2.eval()
         model3.eval()
         val_losses = {'total': [], 'leaf_pos': [], 'all_pos': [], 'pose_6d': []}
+        valid_val_batches = 0
 
         with torch.no_grad():
             for data_val in val_loader:
-                acc_val = data_val[0].to(DEVICE, non_blocking=True).float()
-                ori_val = data_val[2].to(DEVICE, non_blocking=True).float()
-                p_leaf_gt_val = data_val[3].to(DEVICE, non_blocking=True).float()
-                p_all_gt_val = data_val[4].to(DEVICE, non_blocking=True).float()
-                pose_6d_gt_val = data_val[6].to(DEVICE, non_blocking=True).float()
+                try:
+                    acc_val = data_val[0].to(DEVICE, non_blocking=True).float()
+                    ori_val = data_val[2].to(DEVICE, non_blocking=True).float()
+                    p_leaf_gt_val = data_val[3].to(DEVICE, non_blocking=True).float()
+                    p_all_gt_val = data_val[4].to(DEVICE, non_blocking=True).float()
+                    pose_6d_gt_val = data_val[6].to(DEVICE, non_blocking=True).float()
 
-                # 验证前向传播
-                input1_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
-                p_leaf_pred_val = model1(input1_val)
+                    # 数据质量检查
+                    is_valid, reason = improved_data_check(acc_val, ori_val, p_leaf_gt_val)
+                    if not is_valid:
+                        continue
 
-                zeros_val = torch.zeros(p_leaf_pred_val.shape[0], p_leaf_pred_val.shape[1], 3, device=DEVICE)
-                p_leaf_with_root_val = torch.cat(
-                    [zeros_val, p_leaf_pred_val.view(p_leaf_pred_val.shape[0], p_leaf_pred_val.shape[1], -1)], dim=2)
-                input2_val = torch.cat([acc_val, ori_val, p_leaf_with_root_val.view(p_leaf_with_root_val.shape[0],
-                                                                                    p_leaf_with_root_val.shape[1], 6,
-                                                                                    3)], dim=-1).view(acc_val.shape[0],
-                                                                                                      acc_val.shape[1],
-                                                                                                      -1)
-                p_all_pred_val = model2(input2_val)
+                    # 验证数据标准化
+                    acc_val_norm, ori_val_norm, p_leaf_gt_val_norm = normalizer.normalize(acc_val, ori_val,
+                                                                                          p_leaf_gt_val)
+                    p_all_gt_val_norm = normalizer.normalize_pos_only(p_all_gt_val)
 
-                input_base_val = torch.cat((acc_val, ori_val), -1).view(acc_val.shape[0], acc_val.shape[1], -1)
-                pose_6d_pred_val = model3(input_base_val, p_all_pred_val)
+                    # 验证前向传播（使用标准化数据）
+                    input1_val = torch.cat((acc_val_norm, ori_val_norm), -1).view(acc_val_norm.shape[0],
+                                                                                  acc_val_norm.shape[1], -1)
+                    p_leaf_pred_val_norm = model1(input1_val)
 
-                # 验证损失计算
-                loss_leaf_val = torch.sqrt(
-                    criterion(p_leaf_pred_val, p_leaf_gt_val.view(-1, p_leaf_gt_val.shape[1], 15)))
-                p_all_target_val = torch.cat([torch.zeros_like(p_all_gt_val[:, :, 0:1, :]), p_all_gt_val], dim=2).view(
-                    p_all_gt_val.shape[0], p_all_gt_val.shape[1], -1)
-                loss_all_pos_val = torch.sqrt(criterion(p_all_pred_val, p_all_target_val))
+                    zeros_val = torch.zeros(p_leaf_pred_val_norm.shape[0], p_leaf_pred_val_norm.shape[1], 3,
+                                            device=DEVICE)
+                    p_leaf_with_root_val_norm = torch.cat(
+                        [zeros_val,
+                         p_leaf_pred_val_norm.view(p_leaf_pred_val_norm.shape[0], p_leaf_pred_val_norm.shape[1], -1)],
+                        dim=2)
+                    input2_val = torch.cat(
+                        [acc_val_norm, ori_val_norm, p_leaf_with_root_val_norm.view(p_leaf_with_root_val_norm.shape[0],
+                                                                                    p_leaf_with_root_val_norm.shape[1],
+                                                                                    6, 3)], dim=-1).view(
+                        acc_val_norm.shape[0],
+                        acc_val_norm.shape[1], -1)
+                    p_all_pred_val_norm = model2(input2_val)
 
-                batch_size_val, seq_len_val = pose_6d_pred_val.shape[:2]
-                pose_pred_reshaped_val = pose_6d_pred_val.view(batch_size_val, seq_len_val, 24, 6)
-                loss_pose_val = rotation_matrix_loss(pose_pred_reshaped_val, pose_6d_gt_val)
+                    input_base_val = torch.cat((acc_val_norm, ori_val_norm), -1).view(acc_val_norm.shape[0],
+                                                                                      acc_val_norm.shape[1], -1)
+                    pose_6d_pred_val = model3(input_base_val, p_all_pred_val_norm)
 
-                total_loss_val = (loss_weights['leaf_pos'] * loss_leaf_val +
-                                  loss_weights['all_pos'] * loss_all_pos_val +
-                                  loss_weights['pose_6d'] * loss_pose_val)
+                    # 验证损失计算
+                    loss_leaf_val = criterion(p_leaf_pred_val_norm,
+                                              p_leaf_gt_val_norm.view(-1, p_leaf_gt_val_norm.shape[1], 15))
+                    p_all_target_val_norm = torch.cat(
+                        [torch.zeros_like(p_all_gt_val_norm[:, :, 0:1, :]), p_all_gt_val_norm], dim=2).view(
+                        p_all_gt_val_norm.shape[0], p_all_gt_val_norm.shape[1], -1)
+                    loss_all_pos_val = criterion(p_all_pred_val_norm, p_all_target_val_norm)
 
-                if not torch.isnan(total_loss_val) and not torch.isinf(total_loss_val):
-                    val_losses['total'].append(total_loss_val.item())
-                    val_losses['leaf_pos'].append(loss_leaf_val.item())
-                    val_losses['all_pos'].append(loss_all_pos_val.item())
-                    val_losses['pose_6d'].append(loss_pose_val.item())
+                    batch_size_val, seq_len_val = pose_6d_pred_val.shape[:2]
+                    pose_pred_reshaped_val = pose_6d_pred_val.view(batch_size_val, seq_len_val, 24, 6)
+                    loss_pose_val = rotation_matrix_loss_stable(pose_pred_reshaped_val, pose_6d_gt_val)
+
+                    total_loss_val = (loss_weights['leaf_pos'] * loss_leaf_val +
+                                      loss_weights['all_pos'] * loss_all_pos_val +
+                                      loss_weights['pose_6d'] * loss_pose_val)
+
+                    if not torch.isnan(total_loss_val) and not torch.isinf(total_loss_val):
+                        val_losses['total'].append(total_loss_val.item())
+                        val_losses['leaf_pos'].append(loss_leaf_val.item())
+                        val_losses['all_pos'].append(loss_all_pos_val.item())
+                        val_losses['pose_6d'].append(loss_pose_val.item())
+                        valid_val_batches += 1
+
+                except Exception as e:
+                    continue
+
+        print(f"Valid validation batches: {valid_val_batches}/{len(val_loader)}")
 
         # 打印训练结果
         avg_train_losses = {k: np.mean(v) if v else 0.0 for k, v in train_losses.items()}
@@ -649,46 +870,55 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
         print(
             f'  📉 Val   - Total: {avg_val_losses["total"]:.6f}, Leaf: {avg_val_losses["leaf_pos"]:.6f}, Pos: {avg_val_losses["all_pos"]:.6f}, Pose: {avg_val_losses["pose_6d"]:.6f}')
 
-       # 计算损失比率
+        # 计算损失比率
         if avg_train_losses["total"] > 0:
-           loss_ratio = avg_val_losses["total"] / avg_train_losses["total"]
-           print(f'  📊 Loss Ratio (Val/Train): {loss_ratio:.3f}')
+            loss_ratio = avg_val_losses["total"] / avg_train_losses["total"]
+            print(f'  📊 Loss Ratio (Val/Train): {loss_ratio:.3f}')
 
+        # 日志记录
         if LOG_ENABLED and writer:
-           for loss_type in train_losses.keys():
-               writer.add_scalars(f'joint_e2e_loss/{loss_type}', {
-                   'train': avg_train_losses[loss_type],
-                   'val': avg_val_losses[loss_type]
-               }, current_epoch)
-           writer.add_scalar('joint_e2e_learning_rate', current_lr, current_epoch)
-           writer.add_scalar('joint_e2e_loss_ratio', loss_ratio if avg_train_losses["total"] > 0 else 0, current_epoch)
+            for loss_type in train_losses.keys():
+                writer.add_scalars(f'joint_e2e_loss/{loss_type}', {
+                    'train': avg_train_losses[loss_type],
+                    'val': avg_val_losses[loss_type]
+                }, current_epoch)
+            writer.add_scalar('joint_e2e_learning_rate', current_lr, current_epoch)
+            writer.add_scalar('joint_e2e_loss_ratio', loss_ratio if avg_train_losses["total"] > 0 else 0, current_epoch)
 
+        # 学习率调度
         scheduler.step()
+
+        # 早停检查
         early_stopper(avg_val_losses['total'], [model1, model2, model3], optimizer, current_epoch)
         if early_stopper.early_stop:
-           print(f"🛑 Early stopping triggered at epoch {current_epoch} for Joint E2E Training.")
-           break
+            print(f"🛑 Early stopping triggered at epoch {current_epoch} for Joint E2E Training.")
+            break
 
         torch.cuda.empty_cache()
 
-        # 加载最佳模型
-        if os.path.exists(early_stopper.path):
-            print(f"✅ Loading best joint E2E model from epoch {early_stopper.best_epoch}")
-        checkpoint = torch.load(early_stopper.path, map_location=DEVICE)
-        model1.load_state_dict(checkpoint['model1_state_dict'])
-        model2.load_state_dict(checkpoint['model2_state_dict'])
-        model3.load_state_dict(checkpoint['model3_state_dict'])
-        del checkpoint
+    # 🔥 修复：训练完成后再加载最佳模型
+    print(f"\n📥 Loading best joint E2E model from epoch {early_stopper.best_epoch}")
+    if os.path.exists(early_stopper.path):
+        try:
+            checkpoint = torch.load(early_stopper.path, map_location=DEVICE, weights_only=False)
+            model1.load_state_dict(checkpoint['model1_state_dict'])
+            model2.load_state_dict(checkpoint['model2_state_dict'])
+            model3.load_state_dict(checkpoint['model3_state_dict'])
+            print(f"✅ Successfully loaded best models with validation loss: {early_stopper.val_loss_min:.6f}")
+            del checkpoint
+        except Exception as e:
+            print(f"❌ Error loading best model: {e}")
+    else:
+        print(f"⚠️ Warning: Best model file not found at {early_stopper.path}")
 
-        if writer:
-            writer.close()
-        del writer
+    # 清理资源
+    if writer:
+        writer.close()
+    del writer, criterion, scaler
+    torch.cuda.empty_cache()
 
-        del criterion, scaler
-        torch.cuda.empty_cache()
-
-        print("======================== End-to-End Joint Training Finished =======================================")
-        return model1, model2, model3
+    print("======================== End-to-End Joint Training Finished =======================================")
+    return model1, model2, model3
 
 
 # ===== 评估函数 =====
@@ -698,6 +928,19 @@ def evaluate_pipeline(model1, model2, model3, data_loader):
 
    # 评估前清理内存
    clear_memory()
+
+   try:
+       # 兼容性修复
+       import inspect
+       if not hasattr(inspect, 'getargspec'):
+           inspect.getargspec = inspect.getfullargspec
+
+       from evaluator import PoseEvaluator, PerFramePoseEvaluator
+       evaluator = PerFramePoseEvaluator()
+
+   except Exception as e:
+       print(f"⚠️ Warning: Could not initialize evaluator: {e}")
+       print("Performing basic inference test instead...")
 
    # 根据训练模式创建不同的评估目录
    eval_results_dir = os.path.join("GGIP", f"evaluate_{TRAINING_MODE}_pipeline_{TIMESTAMP}")
@@ -855,7 +1098,7 @@ def parse_args():
                        help='Specific checkpoint directory path')
    parser.add_argument('--use_joint_training', action='store_true', default=True,
                        help='Use end-to-end joint training (default: True)')
-   parser.add_argument('--use_residual', action='store_true', default=True,
+   parser.add_argument('--use_residual', action='store_true', default=False,
                        help='Use residual connections in models (default: True)')
    parser.add_argument('--batch_size', type=int, default=64,
                        help='Training batch size (default: 64)')
@@ -891,13 +1134,18 @@ def main():
 
    # 数据加载
    try:
-       train_loader, val_loader = load_data_unified_split(
+       train_loader, val_loader, normalizer = load_data_unified_split(
            train_percent=0.8,
            val_percent=0.2,
            seed=SEED
        )
-       print("✅ Using unified dataset with consistent split!")
+       print("✅ Using unified dataset with consistent split and normalization!")
        check_data_distribution(train_loader, val_loader)
+
+       # 保存标准化参数
+       norm_path = os.path.join(CHECKPOINT_DIR, 'normalizer.pth')
+       normalizer.save(norm_path)
+       print(f"📏 Normalization parameters saved to: {norm_path}")
 
    except Exception as e:
        print(f"❌ Failed to load unified datasets: {e}")
@@ -928,7 +1176,7 @@ def main():
        if os.path.exists(completion_marker) and not args.resume:
            print("🎉 Joint E2E training already completed. Loading best models and skipping training.")
            if os.path.exists(checkpoint_path):
-               checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+               checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
                model1.load_state_dict(checkpoint['model1_state_dict'])
                model2.load_state_dict(checkpoint['model2_state_dict'])
                model3.load_state_dict(checkpoint['model3_state_dict'])
@@ -941,8 +1189,8 @@ def main():
            # 设置联合优化器 - 对不同模块使用不同学习率
            param_groups = [
                {'params': model1.parameters(), 'lr': LEARNING_RATE, 'weight_decay': WEIGHT_DECAY},
-               {'params': model2.parameters(), 'lr': LEARNING_RATE * 0.8, 'weight_decay': WEIGHT_DECAY},
-               {'params': model3.parameters(), 'lr': LEARNING_RATE * 0.6, 'weight_decay': WEIGHT_DECAY},
+               {'params': model2.parameters(), 'lr': LEARNING_RATE * 0.7, 'weight_decay': WEIGHT_DECAY},
+               {'params': model3.parameters(), 'lr': LEARNING_RATE * 0.4, 'weight_decay': WEIGHT_DECAY},
            ]
            optimizer = optim.AdamW(param_groups)
            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -960,7 +1208,7 @@ def main():
            # 检查是否有断点可以恢复
            if os.path.exists(checkpoint_path):
                print(f"🔄 Found joint E2E checkpoint. Resuming training from: {checkpoint_path}")
-               checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
+               checkpoint = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
                model1.load_state_dict(checkpoint['model1_state_dict'])
                model2.load_state_dict(checkpoint['model2_state_dict'])
                model3.load_state_dict(checkpoint['model3_state_dict'])
@@ -970,7 +1218,6 @@ def main():
                early_stopper.best_score = checkpoint['best_score']
                early_stopper.counter = checkpoint.get('early_stopping_counter', 0)
 
-               # 恢复调度器状态
                for _ in range(start_epoch):
                    scheduler.step()
 
@@ -982,10 +1229,10 @@ def main():
            # 执行联合训练
            model1, model2, model3 = train_end_to_end_joint(
                model1, model2, model3, optimizer, scheduler,
-               train_loader, val_loader, MAX_EPOCHS, early_stopper, start_epoch
+               train_loader, val_loader, normalizer,
+               MAX_EPOCHS, early_stopper, start_epoch
            )
 
-           # 训练完成标记
            with open(completion_marker, 'w') as f:
                f.write(f"Joint E2E training completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                f.write(f"Training mode: {TRAINING_MODE}\n")

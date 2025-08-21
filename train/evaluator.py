@@ -66,7 +66,7 @@ class PerFramePoseEvaluator:
     """
 
     def __init__(self,
-                 smpl_model_path=r'I:\python\Ka_GAIP\data\SMPLmodel\basicmodel_m_lbs_10_207_0_v1.0.0.pkl',
+                 smpl_model_path=r'F:\FDIP\basicmodel_m_lbs_10_207_0_v1.0.0.pkl',
                  device='cuda:0', fps=60):
         self.device = torch.device(device)
         self.smpl_model = art.ParametricModel(smpl_model_path, device=self.device, use_pose_blendshape=False)

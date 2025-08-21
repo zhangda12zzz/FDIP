@@ -56,7 +56,8 @@ class BranchAwareSEModule(nn.Module):
                 nn.Sequential(
                     DepthwiseSeparableConv1d(base_channels, base_channels // reduction,
                                              kernel_size=5 if i > num_scales // 2 else 3),
-                    nn.ReLU(inplace=True), self.dropout,
+                    nn.ReLU(inplace=True),
+                    self.dropout,
                     nn.Conv1d(base_channels // reduction, base_channels, kernel_size=1), nn.Sigmoid()
                 ) for i in range(num_scales)
             ])
@@ -73,7 +74,8 @@ class BranchAwareSEModule(nn.Module):
                 nn.Sequential(
                     DepthwiseSeparableConv1d(base_channels, base_channels // reduction,
                                              kernel_size=3 if i < num_scales // 2 else 1),
-                    nn.GELU(), self.dropout,
+                    nn.GELU(),
+                    self.dropout,
                     nn.Conv1d(base_channels // reduction, base_channels, kernel_size=1), nn.Sigmoid()
                 ) for i in range(num_scales)
             ])

@@ -29,7 +29,7 @@ class paths:
 
     result_dir = 'data/result'                                 # 评估结果输出目录
 
-    smpl_file =r'I:\python\Ka_GAIP\data\SMPLmodel\basicmodel_m_lbs_10_207_0_v1.0.0.pkl'           # 官方 SMPL 模型路径
+    smpl_file =r'F:\FDIP\basicmodel_m_lbs_10_207_0_v1.0.0.pkl'           # 官方 SMPL 模型路径
 
     physics_model_file = 'models/urdfmodels/physics.urdf'      # 物理模型路径
     plane_file = 'models/urdfmodels/plane.urdf'                # 平面模型路径（用于调试）

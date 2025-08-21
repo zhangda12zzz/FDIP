@@ -1376,7 +1376,6 @@ def main():
     total_end_time = time.time()
     print(f"Total training time: {(total_end_time - total_start_time) / 3600:.2f} hours")
 
-    # 最终评估前再次清理内存
     clear_memory()
     evaluate_pipeline(model1, model2, model3, val_loader)
 
