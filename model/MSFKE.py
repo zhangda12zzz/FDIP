@@ -48,7 +48,7 @@ class BranchAwareSEModule(nn.Module):
         self.num_scales = num_scales
         self.module_type = module_type
 
-        dropout_rates = {'early': 0.2, 'mid': 0.2, 'late': 0.3}
+        dropout_rates = {'early': 0.1, 'mid': 0.1, 'late': 0.4}
         self.dropout = nn.Dropout(dropout_rates.get(stage, 0.3))
 
         if module_type == 'trunk':
@@ -240,7 +240,7 @@ class NodeAwareMSFKE(nn.Module):
             all_trunk_weights.append(trunk_w)
             all_limb_weights.append(limb_w)
 
-        # --- 4. 并行融合节点编码和共享投射 ---
+        # --- 4. 并行融合节点编码和共ac享投射 ---
         trunk_stacked = torch.stack(all_trunk_features, dim=1)
         limb_stacked = torch.stack(all_limb_features, dim=1)
 

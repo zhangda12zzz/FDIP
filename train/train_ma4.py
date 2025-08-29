@@ -58,16 +58,16 @@ import pandas as pd
 from datetime import datetime
 from articulate.math import r6d_to_rotation_matrix
 from data.dataset_posReg import ImuDataset
-from model.net_zd import FDIP_1, FDIP_2, FDIP_3
+from model.net_zd2 import FDIP_1, FDIP_2, FDIP_3
 from evaluator import PoseEvaluator, PerFramePoseEvaluator
 import gc
 import argparse
 
 # --- Configuration ---
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-LEARNING_RATE = 5e-6
-WEIGHT_DECAY = 5e-3
-BATCH_SIZE = 64
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+LEARNING_RATE = 1e-4
+WEIGHT_DECAY = 1e-4
+BATCH_SIZE = 32
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 LOG_ENABLED = True
 TRAIN_PERCENT = 0.9
@@ -107,7 +107,7 @@ def parse_args():
                         help='Use residual connections in models (default: False)')
     parser.add_argument('--batch_size', type=int, default=64,
                         help='Training batch size (default: 64)')
-    parser.add_argument('--learning_rate', type=float, default=5e-5,
+    parser.add_argument('--learning_rate', type=float, default=1e-4,
                         help='Learning rate (default: 5e-5)')
     parser.add_argument('--max_epochs', type=int, default=150,
                         help='Maximum training epochs (default: 150)')
@@ -1074,8 +1074,8 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
 
     # 调整损失权重
     loss_weights = {
-        'leaf_pos': 0.00,
-        'all_pos': 0.00,
+        'leaf_pos': 0,
+        'all_pos': 0,
         'pose_6d': 1
     }
 
@@ -1101,7 +1101,7 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
                 acc = data[0].to(DEVICE, non_blocking=True).float()
                 ori_6d = data[2].to(DEVICE, non_blocking=True).float()  # 不标准化
                 p_leaf_gt = data[3].to(DEVICE, non_blocking=True).float()  # 不标准化
-                p_all_gt = data[4].to(DEVICE, non_blocking=True).float()  # 不标准化
+                p_all_gt = data[9].to(DEVICE, non_blocking=True).float()  # 不标准化
                 pose_6d_gt = data[6].to(DEVICE, non_blocking=True).float()  # 不标准化
 
                 # 数据质量检查
@@ -1173,7 +1173,7 @@ def train_end_to_end_joint(model1, model2, model3, optimizer, scheduler, train_l
                 # 梯度裁剪
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     [p for model in [model1, model2, model3] for p in model.parameters()],
-                    max_norm=1.0
+                    max_norm=100.0
                 )
 
                 if torch.isnan(grad_norm):
@@ -1698,16 +1698,16 @@ def main():
             param_groups = [
                 {'params': model1.parameters(), 'lr': LEARNING_RATE, 'weight_decay': WEIGHT_DECAY},
                 {'params': model2.parameters(), 'lr': LEARNING_RATE * 0.7, 'weight_decay': WEIGHT_DECAY},
-                {'params': model3.parameters(), 'lr': LEARNING_RATE * 0.1, 'weight_decay': WEIGHT_DECAY},  # 最小学习率
+                {'params': model3.parameters(), 'lr': LEARNING_RATE * 0.5, 'weight_decay': WEIGHT_DECAY},  # 最小学习率
             ]
             optimizer = optim.AdamW(param_groups)
 
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode='min',
-                factor=0.7,
-                patience=8,
-                min_lr=1e-6,
+                factor=0.2,
+                patience=5,
+                min_lr=1e-8,
                 threshold=1e-4
             )
 

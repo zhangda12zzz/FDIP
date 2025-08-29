@@ -77,7 +77,6 @@ class PerFramePoseEvaluator:
         计算一个批次中每一帧的各项误差。
         """
         # --- 0. 形状检查 ---
-        print(pose_p.shape)
         if pose_p.dim() != 4 or pose_p.shape[2:] != (24, 6):
             raise ValueError(f"输入 pose_p 的形状应为 [B, S, 24, 6]，但得到 {pose_p.shape}")
 

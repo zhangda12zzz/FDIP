@@ -392,3 +392,22 @@ if __name__ == '__main__':
     #
     # #split_totalcapture_data()
     # process_from_npy()
+
+
+
+
+    # pose.pt
+    # 的第一个元素是绝对的，其余元素都是相对的
+    #
+    # tran.pt 始终代表绝对的全局位移
+    #
+    # vacc.pt(加速度) - 绝对坐标
+    #
+    # vacc.pt(加速度) - 绝对坐标
+    #
+    # joint.pt  - 绝对坐标
+    #
+
+
+
+

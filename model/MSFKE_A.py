@@ -63,8 +63,8 @@ class BranchAwareSEModule(nn.Module):
         self.num_scales = num_scales
         self.module_type = module_type
 
-        dropout_rates = {'early': 0.2, 'mid': 0.2, 'late': 0.3}
-        self.dropout = nn.Dropout(dropout_rates.get(stage, 0.3))
+        dropout_rates = {'early': 0.1, 'mid': 0.1, 'late': 0.4}
+        self.dropout = nn.Dropout(dropout_rates.get(stage, 0.1))
 
         if module_type == 'trunk':
             self.branch_se_modules = nn.ModuleList([

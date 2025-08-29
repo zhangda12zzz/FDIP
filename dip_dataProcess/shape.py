@@ -171,7 +171,7 @@ if __name__ == "__main__":
     #Type: <class 'list'>
     #Ka_Gaip:   len:60   value[0]: torch.Size([13766, 24, 3, 3])
 
-    pt_file_path = r"D:\Dataset\SingleOne\Pt\vacc.pt"
+    pt_file_path = r"F:\IMUdata\AMASS\DanceDB\pt\joint.pt"
     # Type: <class 'list'>
     #   Ka_Gaip:   len:28   value[0]: torch.Size([1372, 6, 3])
 
@@ -186,6 +186,9 @@ if __name__ == "__main__":
 
 
 
+    display_pt_data(pt_file_path)
+
+    pt_file_path = r"F:\IMUdata\AMASS\DanceDB\pt\tran.pt"
     display_pt_data(pt_file_path)
     """
     每个序列长度不一致
